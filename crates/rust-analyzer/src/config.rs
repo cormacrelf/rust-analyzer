@@ -1035,31 +1035,31 @@ impl HoverActionsConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FilesConfig {
     pub watcher: FilesWatcher,
     pub exclude: Vec<AbsPathBuf>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FilesWatcher {
     Client,
     Server,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NotificationsConfig {
     pub cargo_toml_not_found: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RustfmtConfig {
     Rustfmt { extra_args: Vec<String>, enable_range_formatting: bool },
     CustomCommand { command: String, args: Vec<String> },
 }
 
 /// Configuration for runnable items, such as `main` function or tests.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunnablesConfig {
     /// Custom command to be executed instead of `cargo` for runnables.
     pub override_cargo: Option<String>,
@@ -1068,7 +1068,7 @@ pub struct RunnablesConfig {
 }
 
 /// Configuration for workspace symbol search requests.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceSymbolConfig {
     /// In what scope should the symbol be searched in.
     pub search_scope: WorkspaceSymbolSearchScope,
@@ -2032,7 +2032,7 @@ impl Default for SnippetScopeDef {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(default)]
 struct SnippetDef {
     #[serde(with = "single_or_array")]
@@ -2103,21 +2103,21 @@ mod single_or_array {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 enum ManifestOrProjectJson {
     Manifest(PathBuf),
     ProjectJson(ProjectJsonData),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ExprFillDefaultDef {
     Todo,
     Default,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ImportGranularityDef {
     Preserve,
@@ -2126,7 +2126,7 @@ enum ImportGranularityDef {
     Module,
 }
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum CallableCompletionDef {
     FillArguments,
@@ -2134,7 +2134,7 @@ enum CallableCompletionDef {
     None,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 enum CargoFeaturesDef {
     #[serde(with = "unit_v::all")]
@@ -2142,24 +2142,24 @@ enum CargoFeaturesDef {
     Selected(Vec<String>),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum InvocationStrategy {
     Once,
     PerWorkspace,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct CheckOnSaveTargets(#[serde(with = "single_or_array")] Vec<String>);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum InvocationLocation {
     Root,
     Workspace,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 enum LifetimeElisionDef {
     #[serde(with = "true_or_always")]
@@ -2170,7 +2170,7 @@ enum LifetimeElisionDef {
     SkipTrivial,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 enum ClosureReturnTypeHintsDef {
     #[serde(with = "true_or_always")]
@@ -2181,7 +2181,7 @@ enum ClosureReturnTypeHintsDef {
     WithBlock,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ClosureStyle {
     ImplFn,
@@ -2190,7 +2190,7 @@ enum ClosureStyle {
     Hide,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 enum ReborrowHintsDef {
     #[serde(with = "true_or_always")]
@@ -2201,7 +2201,7 @@ enum ReborrowHintsDef {
     Mutable,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 enum AdjustmentHintsDef {
     #[serde(with = "true_or_always")]
@@ -2212,7 +2212,7 @@ enum AdjustmentHintsDef {
     Reborrow,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 enum DiscriminantHintsDef {
     #[serde(with = "true_or_always")]
@@ -2223,7 +2223,7 @@ enum DiscriminantHintsDef {
     Fieldless,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum AdjustmentHintsModeDef {
     Prefix,
@@ -2232,7 +2232,7 @@ enum AdjustmentHintsModeDef {
     PreferPostfix,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum FilesWatcherDef {
     Client,
@@ -2240,7 +2240,7 @@ enum FilesWatcherDef {
     Server,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ImportPrefixDef {
     Plain,
@@ -2250,21 +2250,21 @@ enum ImportPrefixDef {
     ByCrate,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum WorkspaceSymbolSearchScopeDef {
     Workspace,
     WorkspaceAndDependencies,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum SignatureDetail {
     Full,
     Parameters,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum WorkspaceSymbolSearchKindDef {
     OnlyTypes,
@@ -2375,10 +2375,31 @@ macro_rules! _config_data {
         }
 
         mod $modname {
+            use super::*;
             #[test]
             fn fields_are_sorted() {
                 let field_names: &'static [&'static str] = &[$(stringify!($field)),*];
                 field_names.windows(2).for_each(|w| assert!(w[0] <= w[1], "{} <= {} does not hold", w[0], w[1]));
+            }
+
+            #[test]
+            fn roundtrip() {
+                $({
+                    let field = stringify!($field);
+                    let default_val = default_val!($(@$marker:)? $default, $ty);
+                    let default_str = default_str!($(@$marker:)? $default, $ty);
+
+                    let from_str_val = serde_json::from_str::<$ty>(&default_str).unwrap();
+                    assert!(
+                        default_val == from_str_val,
+                        "{field}: parsing default value from a string:\n{default_str}\n...to:{from_str_val:?}\n...was not the same as the provided value: {default_val:?}",
+                    );
+                    let as_str = serde_json::to_string_pretty(&default_val).unwrap();
+                    assert!(
+                        as_str == default_str,
+                        "{field}: converting default value to a string:\n{as_str}\n...was not the same as the provided string: {default_str}",
+                    );
+                })*
             }
         }
     };

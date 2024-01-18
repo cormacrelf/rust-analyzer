@@ -174,14 +174,14 @@ impl ProjectJson {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ProjectJsonData {
     sysroot: Option<PathBuf>,
     sysroot_src: Option<PathBuf>,
     crates: Vec<CrateData>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct CrateData {
     display_name: Option<String>,
     root_module: PathBuf,
@@ -203,7 +203,7 @@ struct CrateData {
     repository: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename = "edition")]
 enum EditionData {
     #[serde(rename = "2015")]
@@ -224,7 +224,7 @@ impl From<EditionData> for Edition {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct DepData {
     /// Identifies a crate by position in the crates array.
     #[serde(rename = "crate")]
@@ -233,7 +233,7 @@ struct DepData {
     name: CrateName,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct CrateSource {
     include_dirs: Vec<PathBuf>,
     exclude_dirs: Vec<PathBuf>,
