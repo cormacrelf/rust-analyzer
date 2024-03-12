@@ -19,7 +19,7 @@ use parking_lot::{
 };
 use proc_macro_api::ProcMacroServer;
 use project_model::{
-    CargoWorkspace, ManifestPath, ProjectWorkspace, ProjectWorkspaceKind, Target,
+    ManifestPath, ProjectWorkspace, ProjectWorkspaceKind,
     WorkspaceBuildScripts,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -40,6 +40,7 @@ use crate::{
     mem_docs::MemDocs,
     op_queue::OpQueue,
     reload,
+    target_spec::{CargoTargetSpec, TargetSpec},
     task_pool::{TaskPool, TaskQueue},
 };
 
@@ -567,21 +568,39 @@ impl GlobalStateSnapshot {
         self.vfs_read().file_path(file_id).clone()
     }
 
-    pub(crate) fn cargo_target_for_crate_root(
-        &self,
-        crate_id: CrateId,
-    ) -> Option<(&CargoWorkspace, Target)> {
+    pub(crate) fn target_spec_for_crate(&self, crate_id: CrateId) -> Option<TargetSpec> {
         let file_id = self.analysis.crate_root(crate_id).ok()?;
         let path = self.vfs_read().file_path(file_id).clone();
         let path = path.as_path()?;
-        self.workspaces.iter().find_map(|ws| match &ws.kind {
-            ProjectWorkspaceKind::Cargo { cargo, .. }
-            | ProjectWorkspaceKind::DetachedFile { cargo: Some((cargo, _)), .. } => {
-                cargo.target_by_root(path).map(|it| (cargo, it))
+
+        for workspace in self.workspaces.iter() {
+            match &workspace.kind {
+                ProjectWorkspaceKind::Cargo { cargo, .. }
+                | ProjectWorkspaceKind::DetachedFile { cargo: Some((cargo, _)), .. } => {
+                    let Some(target_idx) = cargo.target_by_root(path) else {
+                        continue;
+                    };
+
+                    let target_data = &cargo[target_idx];
+                    let package_data = &cargo[target_data.package];
+
+                    return Some(TargetSpec::Cargo(CargoTargetSpec {
+                        workspace_root: cargo.workspace_root().to_path_buf(),
+                        cargo_toml: package_data.manifest.clone(),
+                        crate_id,
+                        package: cargo.package_flag(package_data),
+                        target: target_data.name.clone(),
+                        target_kind: target_data.kind,
+                        required_features: target_data.required_features.clone(),
+                        features: package_data.features.keys().cloned().collect(),
+                    }));
+                }
+                ProjectWorkspaceKind::Json { .. } => {}
+                ProjectWorkspaceKind::DetachedFile { .. } => {}
             }
-            ProjectWorkspaceKind::Json { .. } => None,
-            ProjectWorkspaceKind::DetachedFile { .. } => None,
-        })
+        }
+
+        None
     }
 
     pub(crate) fn file_exists(&self, file_id: FileId) -> bool {
