@@ -54,9 +54,11 @@ use paths::{AbsPath, AbsPathBuf, Utf8PathBuf};
 use rustc_hash::FxHashMap;
 use serde::{de, Deserialize, Serialize};
 use span::Edition;
+use std::path::PathBuf;
 
 use crate::cfg::CfgFlag;
 use crate::ManifestPath;
+use crate::TargetKind;
 
 /// Roots and crates that compose this Rust project.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,6 +90,21 @@ pub struct Crate {
     pub(crate) exclude: Vec<AbsPathBuf>,
     pub(crate) is_proc_macro: bool,
     pub(crate) repository: Option<String>,
+    pub build_info: Option<BuildInfo>,
+}
+
+/// Additional metadata about a crate, used to configure runnables.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BuildInfo {
+    /// The name associated with this crate, according to the custom
+    /// build system being used.
+    pub label: String,
+    /// What kind of target is this crate? For example, we don't want
+    /// to offer a 'run' button for library crates.
+    pub target_kind: TargetKind,
+    /// Configuration for shell commands, such as CLI invocations for
+    /// a check build or a test run.
+    pub shell_runnables: Vec<ShellRunnableArgs>,
 }
 
 impl ProjectJson {
@@ -127,6 +144,15 @@ impl ProjectJson {
                         None => (vec![root_module.parent().unwrap().to_path_buf()], Vec::new()),
                     };
 
+                    let build_info = match crate_data.build_info {
+                        Some(build_info) => Some(BuildInfo {
+                            label: build_info.label,
+                            target_kind: build_info.target_kind.into(),
+                            shell_runnables: build_info.shell_runnables,
+                        }),
+                        None => None,
+                    };
+
                     Crate {
                         display_name: crate_data
                             .display_name
@@ -146,6 +172,7 @@ impl ProjectJson {
                         exclude,
                         is_proc_macro: crate_data.is_proc_macro,
                         repository: crate_data.repository,
+                        build_info,
                     }
                 })
                 .collect(),
@@ -171,6 +198,15 @@ impl ProjectJson {
     pub fn manifest_or_root(&self) -> &AbsPath {
         self.manifest.as_ref().map_or(&self.project_root, |manifest| manifest.as_ref())
     }
+
+    pub fn crate_by_root(&self, root: &AbsPath) -> Option<Crate> {
+        self.crates
+            .iter()
+            .filter(|krate| krate.is_workspace_member)
+            .find(|krate| krate.root_module == root)
+            .cloned()
+    }
+
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -200,6 +236,8 @@ struct CrateData {
     is_proc_macro: bool,
     #[serde(default)]
     repository: Option<String>,
+    #[serde(default)]
+    build_info: Option<BuildInfoData>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -213,6 +251,48 @@ enum EditionData {
     Edition2021,
     #[serde(rename = "2024")]
     Edition2024,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct BuildInfoData {
+    label: String,
+    target_kind: TargetKindData,
+    shell_runnables: Vec<ShellRunnableArgs>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellRunnableArgs {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub kind: ShellRunnableKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellRunnableKind {
+    Check,
+    Run,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TargetKindData {
+    Bin,
+    /// Any kind of Cargo lib crate-type (dylib, rlib, proc-macro, ...).
+    Lib,
+    Test,
+}
+
+impl From<TargetKindData> for TargetKind {
+    fn from(value: TargetKindData) -> Self {
+        match value {
+            TargetKindData::Bin => TargetKind::Bin,
+            TargetKindData::Lib => TargetKind::Lib { is_proc_macro: false },
+            TargetKindData::Test => TargetKind::Test,
+        }
+    }
 }
 
 impl From<EditionData> for Edition {
