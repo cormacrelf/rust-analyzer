@@ -372,7 +372,7 @@ interface Runnable {
 }
 ```
 
-rust-analyzer supports only one `kind`, `"cargo"`. The `args` for `"cargo"` look like this:
+rust-analyzer supports two `kind`s of runnables, `"cargo"` and `"shell"`. The `args` for `"cargo"` look like this:
 
 ```typescript
 {
@@ -382,6 +382,17 @@ rust-analyzer supports only one `kind`, `"cargo"`. The `args` for `"cargo"` look
     executableArgs: string[];
     expectTest?: boolean;
     overrideCargo?: string;
+}
+```
+
+The args for `"shell"` look like this:
+
+```typescript
+{
+    kind: string;
+    program: string;
+    args: string[];
+    cwd: string;
 }
 ```
 
