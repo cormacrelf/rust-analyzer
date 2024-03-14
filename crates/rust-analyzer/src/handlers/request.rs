@@ -842,15 +842,16 @@ pub(crate) fn handle_runnables(
         if should_skip_target(&runnable, target_spec.as_ref()) {
             continue;
         }
-        let mut runnable = to_proto::runnable(&snap, runnable)?;
-        if expect_test {
-            #[allow(irrefutable_let_patterns)]
-            if let lsp_ext::RunnableArgs::Cargo(r) = &mut runnable.args {
-                runnable.label = format!("{} + expect", runnable.label);
-                r.expect_test = Some(true);
+        if let Some(mut runnable) = to_proto::runnable(&snap, runnable)? {
+            if expect_test {
+                #[allow(irrefutable_let_patterns)]
+                if let lsp_ext::RunnableArgs::Cargo(r) = &mut runnable.args {
+                    runnable.label = format!("{} + expect", runnable.label);
+                    r.expect_test = Some(true);
+                }
             }
+            res.push(runnable);
         }
-        res.push(runnable);
     }
 
     // Add `cargo check` and `cargo test` for all targets of the whole package
@@ -926,7 +927,7 @@ pub(crate) fn handle_related_tests(
     let tests = snap.analysis.related_tests(position, None)?;
     let mut res = Vec::new();
     for it in tests {
-        if let Ok(runnable) = to_proto::runnable(&snap, it) {
+        if let Ok(Some(runnable)) = to_proto::runnable(&snap, it) {
             res.push(lsp_ext::TestInfo { runnable })
         }
     }
@@ -1960,7 +1961,7 @@ fn runnable_action_links(
     }
 
     let title = runnable.title();
-    let r = to_proto::runnable(snap, runnable).ok()?;
+    let r = to_proto::runnable(snap, runnable).ok()??;
 
     let mut group = lsp_ext::CommandLinkGroup::default();
 
