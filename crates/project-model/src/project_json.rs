@@ -274,6 +274,7 @@ pub struct ShellRunnableArgs {
 pub enum ShellRunnableKind {
     Check,
     Run,
+    TestOne,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
