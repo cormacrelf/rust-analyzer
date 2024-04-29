@@ -704,7 +704,7 @@ impl Config {
     // FIXME @alibektas : Server's health uses error sink but in other places it is not used atm.
     /// Changes made to client and global configurations will partially not be reflected even after `.apply_change()` was called.
     /// The return tuple's bool component signals whether the `GlobalState` should call its `update_configuration()` method.
-    pub fn apply_change(
+    fn apply_change_with_sink(
         &self,
         change: ConfigChange,
         error_sink: &mut ConfigError,
@@ -808,10 +808,13 @@ impl Config {
         (config, should_update)
     }
 
-    pub fn apply_change_whatever(&self, change: ConfigChange) -> (Config, ConfigError) {
+    /// Given `change` this generates a new `Config`, thereby collecting errors of type `ConfigError`.
+    /// If there are changes that have global/client level effect, the last component of the return type
+    /// will be set to `true`, which should be used by the `GlobalState` to update itself.
+    pub fn apply_change(&self, change: ConfigChange) -> (Config, ConfigError, bool) {
         let mut e = ConfigError(vec![]);
-        let (config, _) = self.apply_change(change, &mut e);
-        (config, e)
+        let (config, should_update) = self.apply_change_with_sink(change, &mut e);
+        (config, e, should_update)
     }
 }
 
@@ -3299,8 +3302,7 @@ mod tests {
                 "server": null,
         }}));
 
-        let mut error_sink = ConfigError::default();
-        (config, _) = config.apply_change(change, &mut error_sink);
+        (config, _, _) = config.apply_change(change);
         assert_eq!(config.proc_macro_srv(), None);
     }
 
@@ -3319,8 +3321,7 @@ mod tests {
             "server": project_root().display().to_string(),
         }}));
 
-        let mut error_sink = ConfigError::default();
-        (config, _) = config.apply_change(change, &mut error_sink);
+        (config, _, _) = config.apply_change(change);
         assert_eq!(config.proc_macro_srv(), Some(AbsPathBuf::try_from(project_root()).unwrap()));
     }
 
@@ -3341,8 +3342,7 @@ mod tests {
             "server": "./server"
         }}));
 
-        let mut error_sink = ConfigError::default();
-        (config, _) = config.apply_change(change, &mut error_sink);
+        (config, _, _) = config.apply_change(change);
 
         assert_eq!(
             config.proc_macro_srv(),
@@ -3366,8 +3366,7 @@ mod tests {
             "rust" : { "analyzerTargetDir" : null }
         }));
 
-        let mut error_sink = ConfigError::default();
-        (config, _) = config.apply_change(change, &mut error_sink);
+        (config, _, _) = config.apply_change(change);
         assert_eq!(config.cargo_targetDir(), &None);
         assert!(
             matches!(config.flycheck(), FlycheckConfig::CargoCommand { options, .. } if options.target_dir.is_none())
@@ -3389,8 +3388,7 @@ mod tests {
             "rust" : { "analyzerTargetDir" : true }
         }));
 
-        let mut error_sink = ConfigError::default();
-        (config, _) = config.apply_change(change, &mut error_sink);
+        (config, _, _) = config.apply_change(change);
 
         assert_eq!(config.cargo_targetDir(), &Some(TargetDirectory::UseSubdirectory(true)));
         assert!(
@@ -3413,8 +3411,7 @@ mod tests {
             "rust" : { "analyzerTargetDir" : "other_folder" }
         }));
 
-        let mut error_sink = ConfigError::default();
-        (config, _) = config.apply_change(change, &mut error_sink);
+        (config, _, _) = config.apply_change(change);
 
         assert_eq!(
             config.cargo_targetDir(),
