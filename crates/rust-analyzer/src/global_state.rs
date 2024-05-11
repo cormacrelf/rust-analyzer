@@ -595,7 +595,7 @@ impl GlobalStateSnapshot {
                         features: package_data.features.keys().cloned().collect(),
                     }));
                 }
-                ProjectWorkspaceKind::Json { project, .. } => {
+                ProjectWorkspaceKind::Json(project) => {
                     let Some(krate) = project.crate_by_root(path) else {
                         continue;
                     };
@@ -609,7 +609,7 @@ impl GlobalStateSnapshot {
                         shell_runnables: build_info.shell_runnables,
                     }));
                 }
-                ProjectWorkspaceKind::DetachedFiles { .. } => {}
+                ProjectWorkspaceKind::DetachedFile { .. } => {}
             }
         }
 
