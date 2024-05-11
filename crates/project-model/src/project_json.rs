@@ -253,14 +253,14 @@ enum EditionData {
     Edition2024,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BuildInfoData {
     label: String,
     target_kind: TargetKindData,
     shell_runnables: Vec<ShellRunnableArgs>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellRunnableArgs {
     pub program: String,
@@ -269,7 +269,7 @@ pub struct ShellRunnableArgs {
     pub kind: ShellRunnableKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ShellRunnableKind {
     Check,
@@ -277,7 +277,7 @@ pub enum ShellRunnableKind {
     TestOne,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum TargetKindData {
     Bin,
