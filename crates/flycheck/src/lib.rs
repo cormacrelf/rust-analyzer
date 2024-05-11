@@ -233,6 +233,7 @@ enum Event {
     CheckEvent(Option<CargoCheckMessage>),
 }
 
+const LABEL_PLACEHOLDER: &str = "$label";
 const SAVED_FILE_PLACEHOLDER: &str = "$saved_file";
 
 impl FlycheckActor {
@@ -436,29 +437,42 @@ impl FlycheckActor {
                     }
                 }
 
-                if args.contains(&SAVED_FILE_PLACEHOLDER.to_owned()) {
-                    // If the custom command has a $saved_file placeholder, and
-                    // we're saving a file, replace the placeholder in the arguments.
-                    if let Some(saved_file) = saved_file {
-                        let args = args
-                            .iter()
-                            .map(|arg| {
-                                if arg == SAVED_FILE_PLACEHOLDER {
-                                    saved_file.to_string()
-                                } else {
-                                    arg.clone()
-                                }
-                            })
-                            .collect();
-                        (cmd, args)
-                    } else {
-                        // The custom command has a $saved_file placeholder,
-                        // but we had an IDE event that wasn't a file save. Do nothing.
+                let mut args = std::borrow::Cow::Borrowed(&args[..]);
+
+                let label_placeholder_ix = args.iter().position(|x| *x == LABEL_PLACEHOLDER);
+                match (package, label_placeholder_ix) {
+                    (PackageToRestart::Package { package: label }, Some(ix)) => {
+                        let arg: &mut String = &mut args.to_mut()[ix];
+                        arg.clear();
+                        arg.push_str(&label);
+                    }
+                    (PackageToRestart::Package { .. }, None) => {
+                        // The custom command can only be run on all packages at once, because it
+                        // does not have a $label placeholder.
                         return None;
                     }
-                } else {
-                    (cmd, args.clone())
+                    (PackageToRestart::All, Some(_)) => {
+                        // Trying to restart all packages, but the overrideCommand specified a $label placeholder
+                        // and we cannot fill it.
+                        // FIXME: buck2 et al might have a `:` label
+                        return None;
+                    }
+                    (PackageToRestart::All, None) => {}
+                };
+
+                let saved_file_placeholder_ix =
+                    args.iter().position(|x| *x == SAVED_FILE_PLACEHOLDER);
+
+                match (saved_file, saved_file_placeholder_ix) {
+                    (Some(saved_file), Some(ix)) => {
+                        let arg: &mut String = &mut args.to_mut()[ix];
+                        *arg = saved_file.to_string();
+                    }
+                    (None, Some(_ix)) => return None,
+                    _ => {}
                 }
+
+                (cmd, args.into_owned())
             }
         };
 
