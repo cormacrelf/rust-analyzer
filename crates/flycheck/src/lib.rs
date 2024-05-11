@@ -199,7 +199,14 @@ pub enum Progress {
 pub enum PackageToRestart {
     All,
     // Either a cargo package or a $label in rust-project.check.overrideCommand
-    Package { package: String },
+    Package(PackageSpecifier),
+}
+
+pub struct PackageSpecifier {
+    /// The one in Cargo.toml, assumed to work with `cargo check -p {}` etc
+    pub cargo_canonical_name: String,
+    /// If a build_info field is present in rust-project.json, its label field
+    pub build_info_label: Option<String>,
 }
 
 enum StateChange {
@@ -389,7 +396,10 @@ impl FlycheckActor {
                 cmd.current_dir(&self.root);
 
                 match package {
-                    PackageToRestart::Package { package: label } => cmd.arg("-p").arg(label),
+                    PackageToRestart::Package(PackageSpecifier {
+                        cargo_canonical_name: cargo_name,
+                        ..
+                    }) => cmd.arg("-p").arg(cargo_name),
                     PackageToRestart::All => cmd.arg("--workspace"),
                 };
 
@@ -441,12 +451,21 @@ impl FlycheckActor {
 
                 let label_placeholder_ix = args.iter().position(|x| *x == LABEL_PLACEHOLDER);
                 match (package, label_placeholder_ix) {
-                    (PackageToRestart::Package { package: label }, Some(ix)) => {
+                    (
+                        PackageToRestart::Package(PackageSpecifier {
+                            cargo_canonical_name,
+                            build_info_label,
+                            ..
+                        }),
+                        Some(ix),
+                    ) => {
                         let arg: &mut String = &mut args.to_mut()[ix];
                         arg.clear();
+                        // prefer the build_info_label
+                        let label = build_info_label.as_deref().unwrap_or(&cargo_canonical_name);
                         arg.push_str(&label);
                     }
-                    (PackageToRestart::Package { .. }, None) => {
+                    (PackageToRestart::Package(..), None) => {
                         // The custom command can only be run on all packages at once, because it
                         // does not have a $label placeholder.
                         return None;

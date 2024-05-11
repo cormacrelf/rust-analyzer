@@ -76,7 +76,7 @@ pub struct ProjectJson {
 /// useful in creating the crate graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Crate {
-    pub(crate) display_name: Option<CrateDisplayName>,
+    pub display_name: Option<CrateDisplayName>,
     pub root_module: AbsPathBuf,
     pub(crate) edition: Edition,
     pub(crate) version: Option<String>,
