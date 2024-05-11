@@ -139,14 +139,14 @@ impl FlycheckHandle {
 
     /// Schedule a re-start of the cargo check worker to do a workspace wide check.
     pub fn restart_workspace(&self, saved_file: Option<AbsPathBuf>) {
-        self.sender.send(StateChange::Restart { package: None, saved_file }).unwrap();
+        self.sender
+            .send(StateChange::Restart { package: PackageToRestart::All, saved_file })
+            .unwrap();
     }
 
     /// Schedule a re-start of the cargo check worker to do a package wide check.
-    pub fn restart_for_package(&self, package: String) {
-        self.sender
-            .send(StateChange::Restart { package: Some(package), saved_file: None })
-            .unwrap();
+    pub fn restart_for_package(&self, package: PackageToRestart) {
+        self.sender.send(StateChange::Restart { package, saved_file: None }).unwrap();
     }
 
     /// Stop this cargo check worker.
@@ -196,8 +196,14 @@ pub enum Progress {
     DidFailToRestart(String),
 }
 
+pub enum PackageToRestart {
+    All,
+    // Either a cargo package or a $label in rust-project.check.overrideCommand
+    Package { package: String },
+}
+
 enum StateChange {
-    Restart { package: Option<String>, saved_file: Option<AbsPathBuf> },
+    Restart { package: PackageToRestart, saved_file: Option<AbsPathBuf> },
     Cancel,
 }
 
@@ -283,11 +289,10 @@ impl FlycheckActor {
                         }
                     }
 
-                    let command =
-                        match self.check_command(package.as_deref(), saved_file.as_deref()) {
-                            Some(c) => c,
-                            None => continue,
-                        };
+                    let command = match self.check_command(package, saved_file.as_deref()) {
+                        Some(c) => c,
+                        None => continue,
+                    };
                     let formatted_command = format!("{:?}", command);
 
                     tracing::debug!(?command, "will restart flycheck");
@@ -370,7 +375,7 @@ impl FlycheckActor {
     /// return None.
     fn check_command(
         &self,
-        package: Option<&str>,
+        package: PackageToRestart,
         saved_file: Option<&AbsPath>,
     ) -> Option<Command> {
         let (mut cmd, args) = match &self.config {
@@ -383,8 +388,8 @@ impl FlycheckActor {
                 cmd.current_dir(&self.root);
 
                 match package {
-                    Some(pkg) => cmd.arg("-p").arg(pkg),
-                    None => cmd.arg("--workspace"),
+                    PackageToRestart::Package { package: label } => cmd.arg("-p").arg(label),
+                    PackageToRestart::All => cmd.arg("--workspace"),
                 };
 
                 cmd.arg(if *ansi_color_output {
