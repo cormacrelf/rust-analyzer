@@ -18,10 +18,7 @@ use parking_lot::{
     RwLockWriteGuard,
 };
 use proc_macro_api::ProcMacroServer;
-use project_model::{
-    ManifestPath, ProjectWorkspace, ProjectWorkspaceKind,
-    WorkspaceBuildScripts,
-};
+use project_model::{ManifestPath, ProjectWorkspace, ProjectWorkspaceKind, WorkspaceBuildScripts};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{span, Level};
 use triomphe::Arc;
