@@ -365,7 +365,7 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
 }
 
 fn project_json_flycheck(
-    _project_json: &project_json::ProjectJson,
+    project_json: &project_json::ProjectJson,
     krate: &project_json::Crate,
 ) -> Option<flycheck::PackageSpecifier> {
     if let Some(build_info) = krate.build_info.as_ref() {
@@ -377,6 +377,10 @@ fn project_json_flycheck(
         {
             // This build_info fully described the flycheck operation.
             let command = runnable.to_command();
+            Some(flycheck::PackageSpecifier::Custom { command, build_info_label })
+        } else if let Some(template) = project_json.flycheck_template() {
+            // Use the template from the project json root .build_info.default_shell_runnables
+            let command = template.to_command_substituting_label(&build_info_label);
             Some(flycheck::PackageSpecifier::Custom { command, build_info_label })
         } else {
             // We can only substitute $label. No runnable given.

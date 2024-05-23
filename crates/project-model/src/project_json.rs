@@ -70,7 +70,13 @@ pub struct ProjectJson {
     pub(crate) sysroot_src: Option<AbsPathBuf>,
     project_root: AbsPathBuf,
     manifest: Option<ManifestPath>,
+    build_info: Option<ProjectBuildInfo>,
     crates: Vec<Crate>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectBuildInfo {
+    default_shell_runnables: Vec<ShellRunnableArgs>,
 }
 
 /// A crate points to the root module of a crate and lists the dependencies of the crate. This is
@@ -127,6 +133,9 @@ impl ProjectJson {
             sysroot_src: data.sysroot_src.map(absolutize_on_base),
             project_root: base.to_path_buf(),
             manifest,
+            build_info: data
+                .build_info
+                .map(|bi| ProjectBuildInfo { default_shell_runnables: bi.default_shell_runnables }),
             crates: data
                 .crates
                 .into_iter()
@@ -206,13 +215,25 @@ impl ProjectJson {
             .filter(|krate| krate.is_workspace_member)
             .find(|krate| krate.root_module == root)
     }
+
+    pub fn flycheck_template(&self) -> Option<&ShellRunnableArgs> {
+        let bi = self.build_info.as_ref()?;
+        bi.default_shell_runnables.iter().find(|r| r.kind == ShellRunnableKind::Flycheck)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProjectJsonData {
     sysroot: Option<Utf8PathBuf>,
     sysroot_src: Option<Utf8PathBuf>,
+    #[serde(default)]
+    build_info: Option<ProjectBuildInfoData>,
     crates: Vec<CrateData>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct ProjectBuildInfoData {
+    default_shell_runnables: Vec<ShellRunnableArgs>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -272,6 +293,18 @@ impl ShellRunnableArgs {
     pub fn to_command(&self) -> Command {
         let mut cmd = Command::new(&self.program);
         cmd.args(&self.args).current_dir(&self.cwd);
+        cmd
+    }
+    pub fn to_command_substituting_label(&self, label: &str) -> Command {
+        let mut cmd = Command::new(&self.program);
+        for arg in &self.args {
+            if arg == "$label" {
+                cmd.arg(label);
+            } else {
+                cmd.arg(arg);
+            }
+        }
+        cmd.current_dir(&self.cwd);
         cmd
     }
 }
