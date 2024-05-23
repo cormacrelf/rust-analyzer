@@ -320,6 +320,7 @@ impl ShellRunnableArgs {
 #[serde(rename_all = "camelCase")]
 pub enum ShellRunnableKind {
     Flycheck,
+    FlycheckWorkspace,
     Check,
     Run,
     TestOne,
