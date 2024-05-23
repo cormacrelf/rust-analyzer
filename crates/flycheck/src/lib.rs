@@ -224,7 +224,7 @@ pub enum PackageSpecifier {
     },
     /// rust-project.json, but no runnables described. The only way to run this is using
     /// [check].overrideCommand with a $label field
-    SubstituteLabel {
+    SubstituteOverrideCommand {
         /// A build_info field is present in rust-project.json, and this is its label field
         build_info_label: String,
     },
@@ -426,7 +426,7 @@ impl FlycheckActor {
                         // rust-project.json.
                         return Some(command);
                     }
-                    PackageToRestart::Package(PackageSpecifier::SubstituteLabel {
+                    PackageToRestart::Package(PackageSpecifier::SubstituteOverrideCommand {
                         build_info_label: _,
                     }) => {
                         // No way to flycheck this single package. All we have is a build label.
@@ -501,7 +501,7 @@ impl FlycheckActor {
                     (
                         // If you have specified a $label placeholder, those crates in rust-project.toml
                         // that do not have a build_info + label key should not be flycheck-able directly.
-                        PackageToRestart::Package(PackageSpecifier::SubstituteLabel {
+                        PackageToRestart::Package(PackageSpecifier::SubstituteOverrideCommand {
                             build_info_label,
                         }),
                         Some(ix),

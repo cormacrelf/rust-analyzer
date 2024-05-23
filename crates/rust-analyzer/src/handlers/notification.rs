@@ -385,8 +385,8 @@ fn project_json_flycheck(
             let command = template.to_command_substituting_label(&build_info_label);
             Some(flycheck::PackageSpecifier::Custom { command, build_info_label })
         } else {
-            // We can only substitute $label. No runnable given.
-            Some(flycheck::PackageSpecifier::SubstituteLabel { build_info_label })
+            // We can only substitute $label into check.overrideCommand. No runnable given.
+            Some(flycheck::PackageSpecifier::SubstituteOverrideCommand { build_info_label })
         }
     } else {
         // No build_info field, so assume this is built by cargo.
