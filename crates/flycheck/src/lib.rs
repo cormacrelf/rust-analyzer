@@ -420,7 +420,7 @@ impl FlycheckActor {
         }
     }
 
-    fn explicit_check_command(&self, package: &PackageToRestart) -> Option<Command> {
+    fn explicit_check_command(&self, package: PackageToRestart) -> Option<Command> {
         match package {
             PackageToRestart::All => {
                 self.config_json.workspace_template.as_ref().map(|x| x.to_command())
@@ -431,7 +431,7 @@ impl FlycheckActor {
                 | PackageSpecifier::Cargo { cargo_canonical_name: label },
             ) => {
                 let template = self.config_json.single_template.as_ref()?;
-                Some(template.to_command_substituting_label(label))
+                Some(template.to_command_substituting_label(&label))
             }
         }
     }
@@ -446,7 +446,7 @@ impl FlycheckActor {
     ) -> Option<Command> {
         if self.config_json.any_configured() {
             // Completely handle according to rust-project.json.
-            return self.explicit_check_command(&package);
+            return self.explicit_check_command(package);
         }
         let (mut cmd, args) = match &self.config {
             FlycheckConfig::CargoCommand { command, options, ansi_color_output } => {
