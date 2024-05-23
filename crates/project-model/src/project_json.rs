@@ -55,6 +55,7 @@ use rustc_hash::FxHashMap;
 use serde::{de, Deserialize, Serialize};
 use span::Edition;
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::cfg::CfgFlag;
 use crate::ManifestPath;
@@ -206,7 +207,6 @@ impl ProjectJson {
             .find(|krate| krate.root_module == root)
             .cloned()
     }
-
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -269,9 +269,18 @@ pub struct ShellRunnableArgs {
     pub kind: ShellRunnableKind,
 }
 
+impl ShellRunnableArgs {
+    pub fn to_command(&self) -> Command {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args).current_dir(&self.cwd);
+        cmd
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ShellRunnableKind {
+    Flycheck,
     Check,
     Run,
     TestOne,

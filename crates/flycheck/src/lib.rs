@@ -207,11 +207,27 @@ enum PackageToRestart {
     Package(PackageSpecifier),
 }
 
-pub struct PackageSpecifier {
-    /// The one in Cargo.toml, assumed to work with `cargo check -p {}` etc
-    pub cargo_canonical_name: String,
-    /// If a build_info field is present in rust-project.json, its label field
-    pub build_info_label: Option<String>,
+/// Describes how to run flycheck on a single package.
+pub enum PackageSpecifier {
+    /// Please just run cargo.
+    Cargo {
+        /// The one in Cargo.toml, assumed to work with `cargo check -p {}` etc
+        cargo_canonical_name: String,
+    },
+    /// The crate knows how to flycheck itself via a runnable
+    Custom {
+        /// Just run this. It will hopefully emit rustc json.
+        command: Command,
+        /// However if you want to override the flycheck command using check.overrideCommand,
+        /// then you can substitute $label in there.
+        build_info_label: String,
+    },
+    /// rust-project.json, but no runnables described. The only way to run this is using
+    /// [check].overrideCommand with a $label field
+    SubstituteLabel {
+        /// A build_info field is present in rust-project.json, and this is its label field
+        build_info_label: String,
+    },
 }
 
 enum StateChange {
@@ -401,7 +417,23 @@ impl FlycheckActor {
                 cmd.current_dir(&self.root);
 
                 match package {
-                    PackageToRestart::Package(PackageSpecifier {
+                    PackageToRestart::Package(PackageSpecifier::Custom {
+                        command,
+                        build_info_label: _,
+                    }) => {
+                        // Easy. The crate has fully described how to flycheck itself, in
+                        // `build_info.runnables` or however else we are interpreting
+                        // rust-project.json.
+                        return Some(command);
+                    }
+                    PackageToRestart::Package(PackageSpecifier::SubstituteLabel {
+                        build_info_label: _,
+                    }) => {
+                        // No way to flycheck this single package. All we have is a build label.
+                        // No overrideCommand was provided.
+                        return None;
+                    }
+                    PackageToRestart::Package(PackageSpecifier::Cargo {
                         cargo_canonical_name: cargo_name,
                         ..
                     }) => cmd.arg("-p").arg(cargo_name),
@@ -457,24 +489,34 @@ impl FlycheckActor {
                 let label_placeholder_ix = args.iter().position(|x| *x == LABEL_PLACEHOLDER);
                 match (package, label_placeholder_ix) {
                     (
-                        PackageToRestart::Package(PackageSpecifier {
-                            // If you have specified a $label placeholder, those crates in rust-project.toml
-                            // that do not have a build_info + label key should not be flycheck-able directly.
-                            build_info_label: Some(label),
-                            ..
+                        PackageToRestart::Package(PackageSpecifier::Custom {
+                            command,
+                            build_info_label: _,
+                        }),
+                        _,
+                    ) => {
+                        // Again, easy. It is fully described.
+                        return Some(command);
+                    }
+                    (
+                        // If you have specified a $label placeholder, those crates in rust-project.toml
+                        // that do not have a build_info + label key should not be flycheck-able directly.
+                        PackageToRestart::Package(PackageSpecifier::SubstituteLabel {
+                            build_info_label,
                         }),
                         Some(ix),
                     ) => {
                         let arg: &mut String = &mut args.to_mut()[ix];
-                        arg.clear();
-                        arg.push_str(&label);
+                        arg.replace_range(.., &build_info_label);
                     }
                     (
-                        PackageToRestart::Package(PackageSpecifier {
-                            build_info_label: None, ..
-                        }),
-                        Some(_),
-                    ) => return None,
+                        PackageToRestart::Package(PackageSpecifier::Cargo { cargo_canonical_name }),
+                        Some(ix),
+                    ) => {
+                        // We have a crate name, and we will now treat it as a $label.
+                        let arg: &mut String = &mut args.to_mut()[ix];
+                        arg.replace_range(.., &cargo_canonical_name);
+                    }
                     (PackageToRestart::Package(..), None) => {
                         // The custom command can only be run on all packages at once, because it
                         // does not have a $label placeholder.

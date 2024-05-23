@@ -9,6 +9,7 @@ use lsp_types::{
     DidChangeWatchedFilesParams, DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, WorkDoneProgressCancelParams,
 };
+use project_model::project_json;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, ChangeKind, VfsPath};
 
@@ -310,27 +311,45 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         crate_root_paths.iter().find_map(|root| {
                             let target = cargo.target_by_root(root)?;
                             let name = cargo[target].name.clone();
-                            Some(flycheck::PackageSpecifier {
-                                cargo_canonical_name: name,
-                                build_info_label: None,
-                            })
+                            Some(flycheck::PackageSpecifier::Cargo { cargo_canonical_name: name })
                         })
                     }
 
                     project_model::ProjectWorkspaceKind::Json(project) => {
-                        crate_root_paths.iter().find_map(|root| {
+                        let krate_flycheck = crate_root_paths.iter().find_map(|root| {
                             let krate = project.crate_by_root(root)?;
                             let cargo_canonical_name = krate
                                 .display_name
                                 .as_ref()
                                 .map(|x| x.canonical_name().to_owned())?;
-                            let build_info_label =
-                                krate.build_info.as_ref().map(|bi| bi.label.clone());
-                            Some(flycheck::PackageSpecifier {
-                                cargo_canonical_name,
-                                build_info_label,
-                            })
-                        })
+                            if let Some(build_info) = krate.build_info.as_ref() {
+                                let build_info_label = build_info.label.clone();
+                                if let Some(runnable) = build_info
+                                    .shell_runnables
+                                    .iter()
+                                    .find(|x| x.kind == project_json::ShellRunnableKind::Flycheck)
+                                {
+                                    // This build_info fully described the flycheck operation.
+                                    let command = runnable.to_command();
+                                    Some(flycheck::PackageSpecifier::Custom {
+                                        command,
+                                        build_info_label,
+                                    })
+                                } else {
+                                    // We can only substitute $label. No runnable given.
+                                    Some(flycheck::PackageSpecifier::SubstituteLabel {
+                                        build_info_label,
+                                    })
+                                }
+                            } else {
+                                // No build_info field, so assume this is built by cargo.
+                                Some(flycheck::PackageSpecifier::Cargo { cargo_canonical_name })
+                            }
+                        });
+
+                        // If there is no matching crate, returns None and doesn't hit this
+                        // workspace in the loop below.
+                        Some(krate_flycheck?)
                     }
                     project_model::ProjectWorkspaceKind::DetachedFile { .. } => return None,
                 };
