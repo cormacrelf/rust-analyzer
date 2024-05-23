@@ -12,6 +12,7 @@ use std::{fmt, io, process::Command, time::Duration};
 
 use crossbeam_channel::{never, select, unbounded, Receiver, Sender};
 use paths::{AbsPath, AbsPathBuf, Utf8PathBuf};
+use project_model::project_json;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
@@ -79,6 +80,23 @@ impl CargoOptions {
     }
 }
 
+/// The flycheck config from a rust-project.json file
+#[derive(Debug, Default)]
+pub struct FlycheckConfigJson {
+    pub workspace_template: Option<project_json::ShellRunnableArgs>,
+    pub single_template: Option<project_json::ShellRunnableArgs>,
+}
+
+impl FlycheckConfigJson {
+    pub fn any_configured(&self) -> bool {
+        self.workspace_template.is_some() || self.single_template.is_some()
+    }
+}
+
+/// The flycheck config from rust-analyzer's own configuration.
+///
+/// We rely on this when rust-project.json does not specify flycheck/flycheckWorkspace commands.
+///
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlycheckConfig {
     CargoCommand {
@@ -122,13 +140,21 @@ impl FlycheckHandle {
     pub fn spawn(
         id: usize,
         sender: Box<dyn Fn(Message) + Send>,
+        config_json: FlycheckConfigJson,
         config: FlycheckConfig,
         sysroot_root: Option<AbsPathBuf>,
         workspace_root: AbsPathBuf,
         manifest_path: Option<AbsPathBuf>,
     ) -> FlycheckHandle {
-        let actor =
-            FlycheckActor::new(id, sender, config, sysroot_root, workspace_root, manifest_path);
+        let actor = FlycheckActor::new(
+            id,
+            sender,
+            config_json,
+            config,
+            sysroot_root,
+            workspace_root,
+            manifest_path,
+        );
         let (sender, receiver) = unbounded::<StateChange>();
         let thread = stdx::thread::Builder::new(stdx::thread::ThreadIntent::Worker)
             .name("Flycheck".to_owned())
@@ -222,8 +248,7 @@ pub enum PackageSpecifier {
         /// then you can substitute $label in there.
         build_info_label: String,
     },
-    /// rust-project.json, but no runnables described. The only way to run this is using
-    /// [check].overrideCommand with a $label field
+    /// build_info.label in rust-project.json. Substituted into the flycheck runnable at the root of the json.
     SubstituteOverrideCommand {
         /// A build_info field is present in rust-project.json, and this is its label field
         build_info_label: String,
@@ -240,7 +265,9 @@ struct FlycheckActor {
     /// The workspace id of this flycheck instance.
     id: usize,
     sender: Box<dyn Fn(Message) + Send>,
+    config_json: FlycheckConfigJson,
     config: FlycheckConfig,
+    /// If we are flychecking a cargo workspace, this will point to the workspace Cargo.toml
     manifest_path: Option<AbsPathBuf>,
     /// Either the workspace root of the workspace we are flychecking,
     /// or the project root of the project.
@@ -268,6 +295,7 @@ impl FlycheckActor {
     fn new(
         id: usize,
         sender: Box<dyn Fn(Message) + Send>,
+        config_json: FlycheckConfigJson,
         config: FlycheckConfig,
         sysroot_root: Option<AbsPathBuf>,
         workspace_root: AbsPathBuf,
@@ -277,6 +305,7 @@ impl FlycheckActor {
         FlycheckActor {
             id,
             sender,
+            config_json,
             config,
             sysroot_root,
             root: workspace_root,
@@ -399,6 +428,22 @@ impl FlycheckActor {
         }
     }
 
+    fn explicit_check_command(&self, package: &PackageToRestart) -> Option<Command> {
+        match package {
+            PackageToRestart::All => {
+                self.config_json.workspace_template.as_ref().map(|x| x.to_command())
+            }
+            PackageToRestart::Package(
+                PackageSpecifier::Custom { command: _, build_info_label }
+                | PackageSpecifier::Cargo { cargo_canonical_name: build_info_label }
+                | PackageSpecifier::SubstituteOverrideCommand { build_info_label },
+            ) => {
+                let template = self.config_json.single_template.as_ref()?;
+                Some(template.to_command_substituting_label(build_info_label))
+            }
+        }
+    }
+
     /// Construct a `Command` object for checking the user's code. If the user
     /// has specified a custom command with placeholders that we cannot fill,
     /// return None.
@@ -407,6 +452,10 @@ impl FlycheckActor {
         package: PackageToRestart,
         saved_file: Option<&AbsPath>,
     ) -> Option<Command> {
+        if self.config_json.any_configured() {
+            // Completely handle according to rust-project.json.
+            return self.explicit_check_command(&package);
+        }
         let (mut cmd, args) = match &self.config {
             FlycheckConfig::CargoCommand { command, options, ansi_color_output } => {
                 let mut cmd = Command::new(Tool::Cargo.path());

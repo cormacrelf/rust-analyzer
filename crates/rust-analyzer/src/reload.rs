@@ -26,7 +26,10 @@ use itertools::Itertools;
 use load_cargo::{load_proc_macro, ProjectFolders};
 use lsp_types::FileSystemWatcher;
 use proc_macro_api::ProcMacroServer;
-use project_model::{ManifestPath, ProjectWorkspace, ProjectWorkspaceKind, WorkspaceBuildScripts};
+use project_model::{
+    project_json::ShellRunnableKind, ManifestPath, ProjectWorkspace, ProjectWorkspaceKind,
+    WorkspaceBuildScripts,
+};
 use stdx::{format_to, thread::ThreadIntent};
 use tracing::error;
 use triomphe::Arc;
@@ -731,6 +734,7 @@ impl GlobalState {
             flycheck::InvocationStrategy::Once => vec![FlycheckHandle::spawn(
                 0,
                 Box::new(move |msg| sender.send(msg).unwrap()),
+                flycheck::FlycheckConfigJson::default(),
                 config,
                 None,
                 self.config.root_path().clone(),
@@ -748,13 +752,36 @@ impl GlobalState {
                                 | ProjectWorkspaceKind::DetachedFile {
                                     cargo: Some((cargo, _)),
                                     ..
-                                } => (cargo.workspace_root(), Some(cargo.manifest_path())),
+                                } => (
+                                    flycheck::FlycheckConfigJson::default(),
+                                    cargo.workspace_root(),
+                                    Some(cargo.manifest_path()),
+                                ),
                                 ProjectWorkspaceKind::Json(project) => {
-                                    // Enable flychecks for json projects if a custom flycheck command was supplied
-                                    // in the workspace configuration.
+                                    let config_json = flycheck::FlycheckConfigJson {
+                                        workspace_template: project
+                                            .shell_runnable_template(
+                                                ShellRunnableKind::FlycheckWorkspace,
+                                            )
+                                            .cloned(),
+                                        single_template: project
+                                            .shell_runnable_template(ShellRunnableKind::Flycheck)
+                                            .cloned(),
+                                    };
                                     match config {
+                                        // If rust-project.json has set a flycheck command, let it rip.
+                                        _ if config_json.any_configured() => {
+                                            (config_json, project.path(), None)
+                                        }
+                                        // Enable flychecks for json projects if a custom flycheck command
+                                        // was supplied in the global configuration. This is
+                                        // somewhat legacy behaviour. There is also a new split
+                                        // between "global" and "local" configs, and
+                                        // `check_overrideCommand` is currently global, which is
+                                        // probably not right.
                                         FlycheckConfig::CustomCommand { .. } => {
-                                            (project.path(), None)
+                                            // config_json is default
+                                            (config_json, project.path(), None)
                                         }
                                         _ => return None,
                                     }
@@ -764,11 +791,12 @@ impl GlobalState {
                             ws.sysroot.root().map(ToOwned::to_owned),
                         ))
                     })
-                    .map(|(id, (root, manifest_path), sysroot_root)| {
+                    .map(|(id, (config_json, root, manifest_path), sysroot_root)| {
                         let sender = sender.clone();
                         FlycheckHandle::spawn(
                             id,
                             Box::new(move |msg| sender.send(msg).unwrap()),
+                            config_json,
                             config.clone(),
                             sysroot_root,
                             root.to_path_buf(),

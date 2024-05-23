@@ -444,6 +444,7 @@ dependencies = [
  "command-group",
  "crossbeam-channel",
  "paths",
+ "project-model",
  "rustc-hash",
  "serde",
  "serde_json",
