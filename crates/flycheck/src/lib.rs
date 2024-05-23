@@ -245,6 +245,10 @@ pub enum PackageSpecifier {
         /// A build_info field is present in rust-project.json, and this is its label field
         label: String,
     },
+    // BuildInfo specified a flycheck runnable on the crate itself
+    BuildInfoCustom {
+        command: Command,
+    },
 }
 
 enum StateChange {
@@ -433,6 +437,7 @@ impl FlycheckActor {
                 let template = self.config_json.single_template.as_ref()?;
                 Some(template.to_command_substituting_label(&label))
             }
+            PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command }) => Some(command),
         }
     }
 
@@ -458,6 +463,9 @@ impl FlycheckActor {
                 cmd.current_dir(&self.root);
 
                 match package {
+                    PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command }) => {
+                        return Some(command)
+                    }
                     PackageToRestart::Package(PackageSpecifier::BuildInfo { label: _ }) => {
                         // No way to flycheck this single package. All we have is a build label.
                         // There's no way to really say whether this build label happens to be
@@ -519,6 +527,10 @@ impl FlycheckActor {
 
                 let label_placeholder_ix = args.iter().position(|x| *x == LABEL_PLACEHOLDER);
                 match (package, label_placeholder_ix) {
+                    (
+                        PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command }),
+                        _,
+                    ) => return Some(command),
                     (
                         // If you have specified a $label placeholder, those crates in rust-project.toml
                         // that do not have a build_info + label key should not be flycheck-able directly.
