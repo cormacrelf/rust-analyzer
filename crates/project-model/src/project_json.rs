@@ -309,6 +309,8 @@ impl ShellRunnableArgs {
                 let mut arg = arg.to_string();
                 arg.replace_range(ix..ix + LABEL_INLINE.len(), label);
                 cmd.arg(arg);
+            } else {
+                cmd.arg(arg);
             }
         }
         cmd.current_dir(&self.cwd);
