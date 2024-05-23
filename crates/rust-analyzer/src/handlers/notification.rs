@@ -378,7 +378,9 @@ fn project_json_flycheck(
             // This build_info fully described the flycheck operation.
             let command = runnable.to_command();
             Some(flycheck::PackageSpecifier::Custom { command, build_info_label })
-        } else if let Some(template) = project_json.flycheck_template() {
+        } else if let Some(template) =
+            project_json.shell_runnable_template(project_json::ShellRunnableKind::Flycheck)
+        {
             // Use the template from the project json root .build_info.default_shell_runnables
             let command = template.to_command_substituting_label(&build_info_label);
             Some(flycheck::PackageSpecifier::Custom { command, build_info_label })

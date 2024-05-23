@@ -216,9 +216,11 @@ impl ProjectJson {
             .find(|krate| krate.root_module == root)
     }
 
-    pub fn flycheck_template(&self) -> Option<&ShellRunnableArgs> {
+    /// Returns shell runnables with $label/$$LABEL$$ to be substituted into them.
+    /// Call [ShellRunnableArgs::to_command_substituting_label] on that.
+    pub fn shell_runnable_template(&self, kind: ShellRunnableKind) -> Option<&ShellRunnableArgs> {
         let bi = self.build_info.as_ref()?;
-        bi.default_shell_runnables.iter().find(|r| r.kind == ShellRunnableKind::Flycheck)
+        bi.default_shell_runnables.iter().find(|r| r.kind == kind)
     }
 }
 
@@ -295,12 +297,17 @@ impl ShellRunnableArgs {
         cmd.args(&self.args).current_dir(&self.cwd);
         cmd
     }
+    /// Syntax: `args: ["check", "$label", "or", "$$LABEL$$-test"]` becomes `["check", "label", "or",
+    /// "label-test"]`
     pub fn to_command_substituting_label(&self, label: &str) -> Command {
         let mut cmd = Command::new(&self.program);
+        const LABEL_INLINE: &str = "$$LABEL$$";
         for arg in &self.args {
             if arg == "$label" {
                 cmd.arg(label);
-            } else {
+            } else if let Some(ix) = arg.find(LABEL_INLINE) {
+                let mut arg = arg.to_string();
+                arg.replace_range(ix..ix + LABEL_INLINE.len(), label);
                 cmd.arg(arg);
             }
         }
