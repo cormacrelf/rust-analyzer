@@ -491,13 +491,14 @@ impl FlycheckActor {
                 match (package, label_placeholder_ix) {
                     (
                         PackageToRestart::Package(PackageSpecifier::Custom {
-                            command,
+                            mut command,
                             build_info_label: _,
                         }),
                         None,
                     ) => {
                         // No $label placeholder, let's just use the fully specified flycheck
                         // command for this crate.
+                        command.envs(extra_env);
                         return Some(command);
                     }
                     (
