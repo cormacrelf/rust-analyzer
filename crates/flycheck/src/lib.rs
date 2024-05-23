@@ -430,7 +430,8 @@ impl FlycheckActor {
                         build_info_label: _,
                     }) => {
                         // No way to flycheck this single package. All we have is a build label.
-                        // No overrideCommand was provided.
+                        // There's no way to really say whether this build label happens to be
+                        // a canonical crate name, so we won't try.
                         return None;
                     }
                     PackageToRestart::Package(PackageSpecifier::Cargo {
@@ -493,15 +494,23 @@ impl FlycheckActor {
                             command,
                             build_info_label: _,
                         }),
-                        _,
+                        None,
                     ) => {
-                        // Again, easy. It is fully described.
+                        // No $label placeholder, let's just use the fully specified flycheck
+                        // command for this crate.
                         return Some(command);
                     }
                     (
                         // If you have specified a $label placeholder, those crates in rust-project.toml
                         // that do not have a build_info + label key should not be flycheck-able directly.
-                        PackageToRestart::Package(PackageSpecifier::SubstituteOverrideCommand {
+                        PackageToRestart::Package(PackageSpecifier::Custom {
+                            command: _,
+                            // We have a fully specified command, but the user wanted to override
+                            // it using check.overrideCommand. So let's run it through the
+                            // substitution.
+                            build_info_label,
+                        })
+                        | PackageToRestart::Package(PackageSpecifier::SubstituteOverrideCommand {
                             build_info_label,
                         }),
                         Some(ix),
