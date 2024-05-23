@@ -200,12 +200,11 @@ impl ProjectJson {
         self.manifest.as_ref().map_or(&self.project_root, |manifest| manifest.as_ref())
     }
 
-    pub fn crate_by_root(&self, root: &AbsPath) -> Option<Crate> {
+    pub fn crate_by_root(&self, root: &AbsPath) -> Option<&Crate> {
         self.crates
             .iter()
             .filter(|krate| krate.is_workspace_member)
             .find(|krate| krate.root_module == root)
-            .cloned()
     }
 }
 

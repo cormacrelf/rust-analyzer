@@ -318,33 +318,7 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                     project_model::ProjectWorkspaceKind::Json(project) => {
                         let krate_flycheck = crate_root_paths.iter().find_map(|root| {
                             let krate = project.crate_by_root(root)?;
-                            let cargo_canonical_name = krate
-                                .display_name
-                                .as_ref()
-                                .map(|x| x.canonical_name().to_owned())?;
-                            if let Some(build_info) = krate.build_info.as_ref() {
-                                let build_info_label = build_info.label.clone();
-                                if let Some(runnable) = build_info
-                                    .shell_runnables
-                                    .iter()
-                                    .find(|x| x.kind == project_json::ShellRunnableKind::Flycheck)
-                                {
-                                    // This build_info fully described the flycheck operation.
-                                    let command = runnable.to_command();
-                                    Some(flycheck::PackageSpecifier::Custom {
-                                        command,
-                                        build_info_label,
-                                    })
-                                } else {
-                                    // We can only substitute $label. No runnable given.
-                                    Some(flycheck::PackageSpecifier::SubstituteLabel {
-                                        build_info_label,
-                                    })
-                                }
-                            } else {
-                                // No build_info field, so assume this is built by cargo.
-                                Some(flycheck::PackageSpecifier::Cargo { cargo_canonical_name })
-                            }
+                            project_json_flycheck(project, krate)
                         });
 
                         // If there is no matching crate, returns None and doesn't hit this
@@ -387,6 +361,32 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
         true
     } else {
         false
+    }
+}
+
+fn project_json_flycheck(
+    _project_json: &project_json::ProjectJson,
+    krate: &project_json::Crate,
+) -> Option<flycheck::PackageSpecifier> {
+    if let Some(build_info) = krate.build_info.as_ref() {
+        let build_info_label = build_info.label.clone();
+        if let Some(runnable) = build_info
+            .shell_runnables
+            .iter()
+            .find(|x| x.kind == project_json::ShellRunnableKind::Flycheck)
+        {
+            // This build_info fully described the flycheck operation.
+            let command = runnable.to_command();
+            Some(flycheck::PackageSpecifier::Custom { command, build_info_label })
+        } else {
+            // We can only substitute $label. No runnable given.
+            Some(flycheck::PackageSpecifier::SubstituteLabel { build_info_label })
+        }
+    } else {
+        // No build_info field, so assume this is built by cargo.
+        let cargo_canonical_name =
+            krate.display_name.as_ref().map(|x| x.canonical_name().to_owned())?;
+        Some(flycheck::PackageSpecifier::Cargo { cargo_canonical_name })
     }
 }
 

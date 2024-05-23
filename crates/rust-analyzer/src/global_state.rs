@@ -599,7 +599,7 @@ impl GlobalStateSnapshot {
                     let Some(krate) = project.crate_by_root(path) else {
                         continue;
                     };
-                    let Some(build_info) = krate.build_info else {
+                    let Some(build_info) = krate.build_info.clone() else {
                         continue;
                     };
 
