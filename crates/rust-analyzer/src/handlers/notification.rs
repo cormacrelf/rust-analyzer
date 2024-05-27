@@ -342,8 +342,7 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                     if id == flycheck.id() {
                         updated = true;
                         match package.filter(|_| !world.config.flycheck_workspace()) {
-                            Some(package) => flycheck
-                                .restart_for_package(flycheck::PackageToRestart::Package(package)),
+                            Some(package) => flycheck.restart_for_package(package),
                             None => flycheck.restart_workspace(saved_file.clone()),
                         }
                         continue;
