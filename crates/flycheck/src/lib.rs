@@ -245,10 +245,59 @@ pub enum PackageSpecifier {
         /// A build_info field is present in rust-project.json, and this is its label field
         label: String,
     },
-    // BuildInfo specified a flycheck runnable on the crate itself
+    // build_info.shell_runnables specified a flycheck on the crate itself
     BuildInfoCustom {
+        label: String,
         command: Command,
     },
+}
+
+const LABEL_INLINE: &str = "$$LABEL$$";
+
+struct Substitutions<'a> {
+    label: Option<&'a str>,
+    saved_file: Option<&'a str>,
+}
+
+impl<'a> Substitutions<'a> {
+    /// If you have a runnable, and it has $$LABEL$$ in it somewhere, treat it as a template that
+    /// may be unsatisfied if you do not provide a label to substitute into it. Returns None in
+    /// that sitution. Otherwise performs the requested substitutions.
+    ///
+    fn substitute(self, template: &project_json::ShellRunnableArgs) -> Option<Command> {
+        let mut cmd = Command::new(&template.program);
+        let mut label_satisfied = self.label.is_none();
+        let mut saved_file_satisfied = self.saved_file.is_none();
+        for arg in &template.args {
+            if let Some(ix) = arg.find(LABEL_INLINE) {
+                if let Some(label) = self.label {
+                    let mut arg = arg.to_string();
+                    arg.replace_range(ix..ix + LABEL_INLINE.len(), label);
+                    cmd.arg(arg);
+                    label_satisfied = true;
+                    continue;
+                } else {
+                    return None;
+                }
+            }
+            if arg == "$saved_file" {
+                if let Some(saved_file) = self.saved_file {
+                    cmd.arg(saved_file);
+                    saved_file_satisfied = true;
+                    continue;
+                } else {
+                    return None;
+                }
+            }
+            cmd.arg(arg);
+        }
+        if label_satisfied && saved_file_satisfied {
+            cmd.current_dir(&template.cwd);
+            Some(cmd)
+        } else {
+            None
+        }
+    }
 }
 
 enum StateChange {
@@ -283,9 +332,6 @@ enum Event {
     RequestStateChange(StateChange),
     CheckEvent(Option<CargoCheckMessage>),
 }
-
-const LABEL_PLACEHOLDER: &str = "$label";
-const SAVED_FILE_PLACEHOLDER: &str = "$saved_file";
 
 impl FlycheckActor {
     fn new(
@@ -424,7 +470,11 @@ impl FlycheckActor {
         }
     }
 
-    fn explicit_check_command(&self, package: PackageToRestart) -> Option<Command> {
+    fn explicit_check_command(
+        &self,
+        package: PackageToRestart,
+        saved_file: Option<&AbsPath>,
+    ) -> Option<Command> {
         match package {
             PackageToRestart::All => {
                 self.config_json.workspace_template.as_ref().map(|x| x.to_command())
@@ -435,9 +485,13 @@ impl FlycheckActor {
                 | PackageSpecifier::Cargo { cargo_canonical_name: label },
             ) => {
                 let template = self.config_json.single_template.as_ref()?;
-                Some(template.to_command_substituting_label(&label))
+                let subs = Substitutions {
+                    label: Some(&label),
+                    saved_file: saved_file.map(|x| x.as_str()),
+                };
+                subs.substitute(template)
             }
-            PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command }) => Some(command),
+            PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command, label: _ }) => Some(command),
         }
     }
 
@@ -449,12 +503,18 @@ impl FlycheckActor {
         package: PackageToRestart,
         saved_file: Option<&AbsPath>,
     ) -> Option<Command> {
-        if self.config_json.any_configured() {
-            // Completely handle according to rust-project.json.
-            return self.explicit_check_command(package);
-        }
         let (mut cmd, args) = match &self.config {
             FlycheckConfig::CargoCommand { command, options, ansi_color_output } => {
+                // Only use the rust-project.json's flycheck config when no check_overrideCommand
+                // is configured. In the other branch we will still do label substitution but on
+                // the overrideCommand instead.
+                if self.config_json.any_configured() {
+                    // Completely handle according to rust-project.json.
+                    // We don't consider this to be "using cargo" so we will not apply any of the
+                    // CargoOptions to the command.
+                    return self.explicit_check_command(package, saved_file);
+                }
+
                 let mut cmd = Command::new(Tool::Cargo.path());
                 if let Some(sysroot_root) = &self.sysroot_root {
                     cmd.env("RUSTUP_TOOLCHAIN", AsRef::<std::path::Path>::as_ref(sysroot_root));
@@ -463,9 +523,10 @@ impl FlycheckActor {
                 cmd.current_dir(&self.root);
 
                 match package {
-                    PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command }) => {
-                        return Some(command)
-                    }
+                    PackageToRestart::Package(PackageSpecifier::BuildInfoCustom {
+                        command,
+                        label: _,
+                    }) => return Some(command),
                     PackageToRestart::Package(PackageSpecifier::BuildInfo { label: _ }) => {
                         // No way to flycheck this single package. All we have is a build label.
                         // There's no way to really say whether this build label happens to be
@@ -503,78 +564,42 @@ impl FlycheckActor {
                 invocation_strategy,
                 invocation_location,
             } => {
-                let mut cmd = Command::new(command);
-                cmd.envs(extra_env);
-
-                match invocation_location {
+                let cwd = match invocation_location {
                     InvocationLocation::Workspace => {
                         match invocation_strategy {
-                            InvocationStrategy::Once => {
-                                cmd.current_dir(&self.root);
-                            }
+                            InvocationStrategy::Once => self.root.clone(),
                             InvocationStrategy::PerWorkspace => {
                                 // FIXME: cmd.current_dir(&affected_workspace);
-                                cmd.current_dir(&self.root);
+                                self.root.clone()
                             }
                         }
                     }
-                    InvocationLocation::Root(root) => {
-                        cmd.current_dir(root);
-                    }
-                }
-
-                let mut args = std::borrow::Cow::Borrowed(&args[..]);
-
-                let label_placeholder_ix = args.iter().position(|x| *x == LABEL_PLACEHOLDER);
-                match (package, label_placeholder_ix) {
-                    (
-                        PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command }),
-                        _,
-                    ) => return Some(command),
-                    (
-                        // If you have specified a $label placeholder, those crates in rust-project.toml
-                        // that do not have a build_info + label key should not be flycheck-able directly.
-                        PackageToRestart::Package(PackageSpecifier::BuildInfo { label }),
-                        Some(ix),
-                    ) => {
-                        let arg: &mut String = &mut args.to_mut()[ix];
-                        arg.replace_range(.., &label);
-                    }
-                    (
-                        PackageToRestart::Package(PackageSpecifier::Cargo { cargo_canonical_name }),
-                        Some(ix),
-                    ) => {
-                        // We have a crate name, and we will now treat it as a $label.
-                        let arg: &mut String = &mut args.to_mut()[ix];
-                        arg.replace_range(.., &cargo_canonical_name);
-                    }
-                    (PackageToRestart::Package(..), None) => {
-                        // The custom command can only be run on all packages at once, because it
-                        // does not have a $label placeholder.
-                        return None;
-                    }
-                    (PackageToRestart::All, Some(_)) => {
-                        // Trying to restart all packages, but the overrideCommand specified a $label placeholder
-                        // and we cannot fill it.
-                        // FIXME: buck2 et al might have a `:` label
-                        return None;
-                    }
-                    (PackageToRestart::All, None) => {}
+                    InvocationLocation::Root(root) => root.clone(),
                 };
 
-                let saved_file_placeholder_ix =
-                    args.iter().position(|x| *x == SAVED_FILE_PLACEHOLDER);
-
-                match (saved_file, saved_file_placeholder_ix) {
-                    (Some(saved_file), Some(ix)) => {
-                        let arg: &mut String = &mut args.to_mut()[ix];
-                        *arg = saved_file.to_string();
-                    }
-                    (None, Some(_ix)) => return None,
-                    _ => {}
-                }
-
-                (cmd, args.into_owned())
+                let template = project_json::ShellRunnableArgs {
+                    program: command.clone(),
+                    args: args.clone(),
+                    cwd: cwd.into(),
+                    kind: project_json::ShellRunnableKind::Flycheck,
+                };
+                let subs = Substitutions {
+                    label: match &package {
+                        PackageToRestart::All => None,
+                        PackageToRestart::Package(PackageSpecifier::Cargo {
+                            cargo_canonical_name: label,
+                        })
+                        | PackageToRestart::Package(PackageSpecifier::BuildInfo { label })
+                        | PackageToRestart::Package(PackageSpecifier::BuildInfoCustom {
+                            label,
+                            command: _,
+                        }) => Some(&label),
+                    },
+                    saved_file: saved_file.map(|x| x.as_str()),
+                };
+                let mut cmd = subs.substitute(&template)?;
+                cmd.envs(extra_env);
+                (cmd, vec![])
             }
         };
 

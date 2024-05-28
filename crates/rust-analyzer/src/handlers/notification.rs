@@ -369,15 +369,15 @@ fn project_json_flycheck(
     krate: &project_json::Crate,
 ) -> Option<flycheck::PackageSpecifier> {
     if let Some(build_info) = krate.build_info.as_ref() {
+        let label = build_info.label.clone();
         if let Some(runnable) = build_info
             .shell_runnables
             .iter()
             .find(|r| r.kind == project_json::ShellRunnableKind::Flycheck)
         {
             let command = runnable.to_command();
-            Some(flycheck::PackageSpecifier::BuildInfoCustom { command })
+            Some(flycheck::PackageSpecifier::BuildInfoCustom { command, label })
         } else {
-            let label = build_info.label.clone();
             Some(flycheck::PackageSpecifier::BuildInfo { label })
         }
     } else {

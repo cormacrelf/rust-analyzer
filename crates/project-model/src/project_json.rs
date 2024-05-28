@@ -297,25 +297,6 @@ impl ShellRunnableArgs {
         cmd.args(&self.args).current_dir(&self.cwd);
         cmd
     }
-    /// Syntax: `args: ["check", "$label", "or", "$$LABEL$$-test"]` becomes `["check", "label", "or",
-    /// "label-test"]`
-    pub fn to_command_substituting_label(&self, label: &str) -> Command {
-        let mut cmd = Command::new(&self.program);
-        const LABEL_INLINE: &str = "$$LABEL$$";
-        for arg in &self.args {
-            if arg == "$label" {
-                cmd.arg(label);
-            } else if let Some(ix) = arg.find(LABEL_INLINE) {
-                let mut arg = arg.to_string();
-                arg.replace_range(ix..ix + LABEL_INLINE.len(), label);
-                cmd.arg(arg);
-            } else {
-                cmd.arg(arg);
-            }
-        }
-        cmd.current_dir(&self.cwd);
-        cmd
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
