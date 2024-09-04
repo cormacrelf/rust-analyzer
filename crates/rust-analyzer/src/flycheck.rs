@@ -24,7 +24,7 @@ pub(crate) enum InvocationStrategy {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CargoOptions {
+pub(crate) struct CargoOptions {
     pub(crate) target_triples: Vec<String>,
     pub(crate) all_targets: bool,
     pub(crate) no_default_features: bool,
@@ -72,7 +72,7 @@ impl CargoOptions {
 
 /// The flycheck config from a rust-project.json file
 #[derive(Debug, Default)]
-pub struct FlycheckConfigJson {
+pub(crate) struct FlycheckConfigJson {
     // XXX: unimplemented because not all that important> nobody
     // doing custom rust-project.json needs it most likely
     // pub workspace_template: Option<project_json::Runnable>,
@@ -82,7 +82,7 @@ pub struct FlycheckConfigJson {
 }
 
 impl FlycheckConfigJson {
-    pub fn any_configured(&self) -> bool {
+    pub(crate) fn any_configured(&self) -> bool {
         // self.workspace_template.is_some() ||
         self.single_template.is_some()
     }
@@ -243,8 +243,6 @@ pub(crate) enum PackageSpecifier {
         /// If a `build` field is present in rust-project.json, its label field
         label: String,
     },
-    /// WARN: Can't remember what this is for
-    BuildInfoCustom { command: Command, label: String },
 }
 
 enum StateChange {
@@ -513,7 +511,6 @@ impl FlycheckActor {
                 };
                 subs.substitute(template)
             }
-            PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command, label: _ }) => Some(command),
         }
     }
 
@@ -528,6 +525,16 @@ impl FlycheckActor {
     ) -> Option<Command> {
         match &self.config {
             FlycheckConfig::CargoCommand { command, options, ansi_color_output } => {
+                // Only use the rust-project.json's flycheck config when no check_overrideCommand
+                // is configured. In the other branch we will still do label substitution but on
+                // the overrideCommand instead.
+                if self.config_json.any_configured() {
+                    // Completely handle according to rust-project.json.
+                    // We don't consider this to be "using cargo" so we will not apply any of the
+                    // CargoOptions to the command.
+                    return self.explicit_check_command(package, saved_file);
+                }
+
                 let mut cmd = Command::new(Tool::Cargo.path());
                 if let Some(sysroot_root) = &self.sysroot_root {
                     cmd.env("RUSTUP_TOOLCHAIN", AsRef::<std::path::Path>::as_ref(sysroot_root));
@@ -536,8 +543,11 @@ impl FlycheckActor {
                 cmd.current_dir(&self.root);
 
                 match package {
-                    PackageToRestart::Package { package: label } => cmd.arg("-p").arg(label),
+                    PackageToRestart::Package(PackageSpecifier::Cargo { cargo_canonical_name }) => {
+                        cmd.arg("-p").arg(cargo_canonical_name)
+                    }
                     PackageToRestart::All => cmd.arg("--workspace"),
+                    _ => return None,
                 };
 
                 if let Some(tgt) = target {
