@@ -222,10 +222,23 @@ pub(crate) enum Progress {
     DidFailToRestart(String),
 }
 
-pub enum PackageToRestart {
+pub(crate) enum PackageToRestart {
     All,
     // Either a cargo package or a $label in rust-project.check.overrideCommand
-    Package { package: String },
+    Package(PackageSpecifier),
+}
+
+pub(crate) enum PackageSpecifier {
+    Cargo {
+        /// The one in Cargo.toml, assumed to work with `cargo check -p {}` etc
+        cargo_canonical_name: String,
+    },
+    BuildInfo {
+        /// If a `build` field is present in rust-project.json, its label field
+        label: Option<String>,
+    },
+    /// WARN: Can't remember what this is for
+    BuildInfoCustom { command: Command, label: String },
 }
 
 enum StateChange {
