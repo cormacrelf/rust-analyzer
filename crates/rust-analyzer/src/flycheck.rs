@@ -257,7 +257,7 @@ struct FlycheckActor {
     sender: Sender<FlycheckMessage>,
     config: FlycheckConfig,
     config_json: FlycheckConfigJson,
-
+    /// If we are flychecking a cargo workspace, this will point to the workspace Cargo.toml
     manifest_path: Option<AbsPathBuf>,
     /// Either the workspace root of the workspace we are flychecking,
     /// or the project root of the project.
