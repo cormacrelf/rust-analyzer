@@ -221,19 +221,35 @@ impl fmt::Debug for FlycheckMessage {
 
 #[derive(Debug)]
 pub(crate) enum Progress {
-    DidStart,
+    DidStart {
+        /// The user sees this in VSCode, etc. May be a shortened version of the command we actually
+        /// executed, otherwise it is way too long.
+        user_facing_command: String,
+    },
     DidCheckCrate(String),
     DidFinish(io::Result<()>),
     DidCancel,
     DidFailToRestart(String),
 }
 
+#[derive(Debug)]
 enum PackageToRestart {
     All,
     // Either a cargo package or a $label in rust-project.check.overrideCommand
     Package(PackageSpecifier),
 }
 
+#[derive(Debug)]
+enum FlycheckCommandOrigin {
+    /// Regular cargo invocation
+    Cargo,
+    /// Configured via check_overrideCommand
+    CheckOverrideCommand,
+    /// From a runnable with [project_json::RunnableKind::Flycheck]
+    ProjectJsonRunnable,
+}
+
+#[derive(Debug)]
 pub(crate) enum PackageSpecifier {
     Cargo {
         /// The one in Cargo.toml, assumed to work with `cargo check -p {}` etc
@@ -396,7 +412,8 @@ impl FlycheckActor {
                         }
                     }
 
-                    let Some(command) = self.check_command(package, saved_file.as_deref(), target)
+                    let Some((command, origin)) =
+                        self.check_command(package, saved_file.as_deref(), target)
                     else {
                         continue;
                     };
@@ -410,7 +427,15 @@ impl FlycheckActor {
                             tracing::debug!(command = formatted_command, "did restart flycheck");
                             self.command_handle = Some(command_handle);
                             self.command_receiver = Some(receiver);
-                            self.report_progress(Progress::DidStart);
+                            let user_facing_command = match origin {
+                                FlycheckCommandOrigin::Cargo
+                                | FlycheckCommandOrigin::CheckOverrideCommand => {
+                                    self.config.to_string()
+                                }
+                                // show them the full command. advanced user
+                                FlycheckCommandOrigin::ProjectJsonRunnable => formatted_command,
+                            };
+                            self.report_progress(Progress::DidStart { user_facing_command });
                             self.status = FlycheckStatus::Started;
                         }
                         Err(error) => {
@@ -522,7 +547,7 @@ impl FlycheckActor {
         package: PackageToRestart,
         saved_file: Option<&AbsPath>,
         target: Option<Target>,
-    ) -> Option<Command> {
+    ) -> Option<(Command, FlycheckCommandOrigin)> {
         match &self.config {
             FlycheckConfig::CargoCommand { command, options, ansi_color_output } => {
                 // Only use the rust-project.json's flycheck config when no check_overrideCommand
@@ -532,7 +557,8 @@ impl FlycheckActor {
                     // Completely handle according to rust-project.json.
                     // We don't consider this to be "using cargo" so we will not apply any of the
                     // CargoOptions to the command.
-                    return self.explicit_check_command(package, saved_file);
+                    let cmd = self.explicit_check_command(package, saved_file)?;
+                    return Some((cmd, FlycheckCommandOrigin::ProjectJsonRunnable));
                 }
 
                 let mut cmd = Command::new(Tool::Cargo.path());
@@ -582,7 +608,7 @@ impl FlycheckActor {
 
                 options.apply_on_command(&mut cmd);
                 cmd.args(&options.extra_args);
-                Some(cmd)
+                Some((cmd, FlycheckCommandOrigin::Cargo))
             }
             FlycheckConfig::CustomCommand { command, args, extra_env, invocation_strategy } => {
                 let mut cmd = Command::new(command);
@@ -617,7 +643,7 @@ impl FlycheckActor {
                 cmd.envs(extra_env);
                 cmd.current_dir(root);
 
-                Some(cmd)
+                Some((cmd, FlycheckCommandOrigin::CheckOverrideCommand))
             }
         }
     }
