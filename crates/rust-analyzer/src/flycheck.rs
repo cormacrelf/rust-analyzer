@@ -232,7 +232,7 @@ pub(crate) enum Progress {
     DidFailToRestart(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum PackageToRestart {
     All,
     // Either a cargo package or a $label in rust-project.check.overrideCommand
@@ -249,7 +249,7 @@ enum FlycheckCommandOrigin {
     ProjectJsonRunnable,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum PackageSpecifier {
     Cargo {
         /// The one in Cargo.toml, assumed to work with `cargo check -p {}` etc
@@ -413,8 +413,9 @@ impl FlycheckActor {
                     }
 
                     let Some((command, origin)) =
-                        self.check_command(package, saved_file.as_deref(), target)
+                        self.check_command(package.clone(), saved_file.as_deref(), target)
                     else {
+                        tracing::debug!(?package, "failed to build flycheck command");
                         continue;
                     };
 
@@ -429,11 +430,11 @@ impl FlycheckActor {
                         ),
                     };
 
-                    tracing::debug!(?command, "will restart flycheck");
+                    tracing::debug!(?origin, ?command, "will restart flycheck");
                     let (sender, receiver) = unbounded();
                     match CommandHandle::spawn(command, sender) {
                         Ok(command_handle) => {
-                            tracing::debug!(command = debug_command, "did restart flycheck");
+                            tracing::debug!(?origin, command = %debug_command, "did restart flycheck");
                             self.command_handle = Some(command_handle);
                             self.command_receiver = Some(receiver);
                             self.report_progress(Progress::DidStart { user_facing_command });
@@ -441,7 +442,7 @@ impl FlycheckActor {
                         }
                         Err(error) => {
                             self.report_progress(Progress::DidFailToRestart(format!(
-                                "Failed to run the following command: {debug_command} error={error}"
+                                "Failed to run the following command: {debug_command} origin={origin:?} error={error}"
                             )));
                             self.status = FlycheckStatus::Finished;
                         }
