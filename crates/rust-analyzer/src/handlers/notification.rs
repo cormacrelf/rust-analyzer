@@ -10,6 +10,7 @@ use lsp_types::{
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, WorkDoneProgressCancelParams,
 };
 use paths::Utf8PathBuf;
+use project_model::project_json;
 use stdx::TupleExt;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, ChangeKind, VfsPath};
@@ -370,8 +371,7 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                     project_model::ProjectWorkspaceKind::Json(project) => {
                         crate_root_paths.iter().find_map(|root| {
                             let krate = project.crate_by_root(root)?;
-                            let label = krate.build.as_ref().map(|bi| bi.label.clone());
-                            Some(flycheck::PackageSpecifier::BuildInfo { label })
+                            project_json_flycheck(project, &krate)
                         })
                     }
                     project_model::ProjectWorkspaceKind::DetachedFile { .. } => return None,
@@ -389,8 +389,8 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         match package.filter(|_| {
                             !world.config.flycheck_workspace(source_root_id) || target.is_some()
                         }) {
-                            Some(package) => flycheck.restart_for_package(
-                                flycheck::PackageToRestart::Package { package },
+                            Some(spec) => flycheck.restart_for_package(
+                                flycheck::PackageToRestart::Package(spec),
                                 target.clone().map(TupleExt::head),
                             ),
                             None => flycheck.restart_workspace(saved_file.clone()),
@@ -453,4 +453,19 @@ pub(crate) fn handle_abort_run_test(state: &mut GlobalState, _: ()) -> anyhow::R
         state.send_notification::<lsp_ext::EndRunTest>(());
     }
     Ok(())
+}
+
+fn project_json_flycheck(
+    _project_json: &project_json::ProjectJson,
+    krate: &project_json::Crate,
+) -> Option<flycheck::PackageSpecifier> {
+    if let Some(build_info) = krate.build.as_ref() {
+        let label = build_info.label.clone();
+        Some(flycheck::PackageSpecifier::BuildInfo { label: Some(label) })
+    } else {
+        // No build_info field, so assume this is built by cargo.
+        let cargo_canonical_name =
+            krate.display_name.as_ref().map(|x| x.canonical_name().to_owned())?.to_string();
+        Some(flycheck::PackageSpecifier::Cargo { cargo_canonical_name })
+    }
 }
