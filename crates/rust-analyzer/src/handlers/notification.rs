@@ -352,20 +352,27 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                     | project_model::ProjectWorkspaceKind::DetachedFile {
                         cargo: Some((cargo, _, _)),
                         ..
-                    } => cargo.packages().find_map(|pkg| {
-                        let has_target_with_root = cargo[pkg]
-                            .targets
-                            .iter()
-                            .any(|&it| crate_root_paths.contains(&cargo[it].root.as_path()));
-                        has_target_with_root.then(|| cargo[pkg].name.clone())
-                    }),
+                    } => {
+                        // Iterate crate_root_paths first because it is in topological
+                        // order, and we can therefore find the actual crate your saved
+                        // file was in rather than some random downstream dependency.
+                        // Thus with `[check] workspace = false` we can flycheck the
+                        // smallest number of crates (just A) instead of checking B and C
+                        // in response to every file save in A.
+                        //
+                        // A <- B <- C
+                        crate_root_paths.iter().find_map(|root| {
+                            let target = cargo.target_by_root(root)?;
+                            let name = cargo[target].name.clone();
+                            Some(flycheck::PackageSpecifier::Cargo { cargo_canonical_name: name })
+                        })
+                    }
                     project_model::ProjectWorkspaceKind::Json(project) => {
-                        if !project.crates().any(|(_, krate)| {
-                            crate_root_paths.contains(&krate.root_module.as_path())
-                        }) {
-                            return None;
-                        }
-                        None
+                        crate_root_paths.iter().find_map(|root| {
+                            let krate = project.crate_by_root(root)?;
+                            let label = krate.build.as_ref().map(|bi| bi.label.clone());
+                            Some(flycheck::PackageSpecifier::BuildInfo { label })
+                        })
                     }
                     project_model::ProjectWorkspaceKind::DetachedFile { .. } => return None,
                 };
