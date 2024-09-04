@@ -5,6 +5,7 @@ use std::{fmt, io, process::Command, time::Duration};
 
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use paths::{AbsPath, AbsPathBuf, Utf8PathBuf};
+use project_model::project_json;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
@@ -69,6 +70,28 @@ impl CargoOptions {
     }
 }
 
+/// The flycheck config from a rust-project.json file
+#[derive(Debug, Default)]
+pub struct FlycheckConfigJson {
+    // XXX: unimplemented because not all that important> nobody
+    // doing custom rust-project.json needs it most likely
+    // pub workspace_template: Option<project_json::Runnable>,
+    //
+    /// The template with [project_json::RunnableKind::Flycheck]
+    pub single_template: Option<project_json::Runnable>,
+}
+
+impl FlycheckConfigJson {
+    pub fn any_configured(&self) -> bool {
+        // self.workspace_template.is_some() ||
+        self.single_template.is_some()
+    }
+}
+
+/// The flycheck config from rust-analyzer's own configuration.
+///
+/// We rely on this when rust-project.json does not specify a flycheck runnable
+///
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum FlycheckConfig {
     CargoCommand {
@@ -112,12 +135,20 @@ impl FlycheckHandle {
         id: usize,
         sender: Sender<FlycheckMessage>,
         config: FlycheckConfig,
+        config_json: FlycheckConfigJson,
         sysroot_root: Option<AbsPathBuf>,
         workspace_root: AbsPathBuf,
         manifest_path: Option<AbsPathBuf>,
     ) -> FlycheckHandle {
-        let actor =
-            FlycheckActor::new(id, sender, config, sysroot_root, workspace_root, manifest_path);
+        let actor = FlycheckActor::new(
+            id,
+            sender,
+            config,
+            config_json,
+            sysroot_root,
+            workspace_root,
+            manifest_path,
+        );
         let (sender, receiver) = unbounded::<StateChange>();
         let thread = stdx::thread::Builder::new(stdx::thread::ThreadIntent::Worker)
             .name("Flycheck".to_owned())
@@ -208,6 +239,8 @@ struct FlycheckActor {
     id: usize,
     sender: Sender<FlycheckMessage>,
     config: FlycheckConfig,
+    config_json: FlycheckConfigJson,
+
     manifest_path: Option<AbsPathBuf>,
     /// Either the workspace root of the workspace we are flychecking,
     /// or the project root of the project.
@@ -238,13 +271,62 @@ enum FlycheckStatus {
     Finished,
 }
 
-pub(crate) const SAVED_FILE_PLACEHOLDER: &str = "$saved_file";
+/// This is stable behaviour. Don't change.
+const SAVED_FILE_PLACEHOLDER: &str = "$saved_file";
+const LABEL_INLINE: &str = "{label}";
+
+struct Substitutions<'a> {
+    label: Option<&'a str>,
+    saved_file: Option<&'a str>,
+}
+
+impl<'a> Substitutions<'a> {
+    /// If you have a runnable, and it has {label} in it somewhere, treat it as a template that
+    /// may be unsatisfied if you do not provide a label to substitute into it. Returns None in
+    /// that situation. Otherwise performs the requested substitutions.
+    ///
+    fn substitute(self, template: &project_json::Runnable) -> Option<Command> {
+        let mut cmd = Command::new(&template.program);
+        let mut label_satisfied = self.label.is_none();
+        let mut saved_file_satisfied = self.saved_file.is_none();
+        for arg in &template.args {
+            if let Some(ix) = arg.find(LABEL_INLINE) {
+                if let Some(label) = self.label {
+                    let mut arg = arg.to_string();
+                    arg.replace_range(ix..ix + LABEL_INLINE.len(), label);
+                    cmd.arg(arg);
+                    label_satisfied = true;
+                    continue;
+                } else {
+                    return None;
+                }
+            }
+            if arg == SAVED_FILE_PLACEHOLDER {
+                if let Some(saved_file) = self.saved_file {
+                    cmd.arg(saved_file);
+                    saved_file_satisfied = true;
+                    continue;
+                } else {
+                    return None;
+                }
+            }
+            cmd.arg(arg);
+        }
+        if label_satisfied && saved_file_satisfied {
+            cmd.current_dir(&template.cwd);
+            Some(cmd)
+        } else {
+            None
+        }
+    }
+}
 
 impl FlycheckActor {
     fn new(
         id: usize,
         sender: Sender<FlycheckMessage>,
         config: FlycheckConfig,
+        config_json: FlycheckConfigJson,
         sysroot_root: Option<AbsPathBuf>,
         workspace_root: AbsPathBuf,
         manifest_path: Option<AbsPathBuf>,
@@ -254,6 +336,7 @@ impl FlycheckActor {
             id,
             sender,
             config,
+            config_json,
             sysroot_root,
             root: workspace_root,
             manifest_path,
@@ -386,6 +469,32 @@ impl FlycheckActor {
             self.command_receiver.take();
             self.report_progress(Progress::DidCancel);
             self.status = FlycheckStatus::Finished;
+        }
+    }
+
+    fn explicit_check_command(
+        &self,
+        package: PackageToRestart,
+        saved_file: Option<&AbsPath>,
+    ) -> Option<Command> {
+        match package {
+            PackageToRestart::All => {
+                // self.config_json.workspace_template.as_ref().map(|x| x.to_command())
+                None
+            }
+            PackageToRestart::Package(
+                PackageSpecifier::BuildInfo { label }
+                // Treat missing build_info as implicitly setting label = the cargo canonical name
+                | PackageSpecifier::Cargo { cargo_canonical_name: label },
+            ) => {
+                let template = self.config_json.single_template.as_ref()?;
+                let subs = Substitutions {
+                    label: Some(&label),
+                    saved_file: saved_file.map(|x| x.as_str()),
+                };
+                subs.substitute(template)
+            }
+            PackageToRestart::Package(PackageSpecifier::BuildInfoCustom { command, label: _ }) => Some(command),
         }
     }
 

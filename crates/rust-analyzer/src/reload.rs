@@ -24,7 +24,9 @@ use itertools::Itertools;
 use load_cargo::{load_proc_macro, ProjectFolders};
 use lsp_types::FileSystemWatcher;
 use proc_macro_api::ProcMacroServer;
-use project_model::{ManifestPath, ProjectWorkspace, ProjectWorkspaceKind, WorkspaceBuildScripts};
+use project_model::{
+    project_json, ManifestPath, ProjectWorkspace, ProjectWorkspaceKind, WorkspaceBuildScripts,
+};
 use stdx::{format_to, thread::ThreadIntent};
 use triomphe::Arc;
 use vfs::{AbsPath, AbsPathBuf, ChangeKind};
@@ -808,6 +810,7 @@ impl GlobalState {
                     0,
                     sender,
                     config,
+                    crate::flycheck::FlycheckConfigJson::default(),
                     None,
                     self.config.root_path().clone(),
                     None,
@@ -825,13 +828,25 @@ impl GlobalState {
                                 | ProjectWorkspaceKind::DetachedFile {
                                     cargo: Some((cargo, _, _)),
                                     ..
-                                } => (cargo.workspace_root(), Some(cargo.manifest_path())),
+                                } => (
+                                    crate::flycheck::FlycheckConfigJson::default(),
+                                    cargo.workspace_root(),
+                                    Some(cargo.manifest_path()),
+                                ),
                                 ProjectWorkspaceKind::Json(project) => {
+                                    let config_json = crate::flycheck::FlycheckConfigJson {
+                                        single_template: project
+                                            .runnable_template(project_json::RunnableKind::Flycheck)
+                                            .cloned(),
+                                    };
                                     // Enable flychecks for json projects if a custom flycheck command was supplied
                                     // in the workspace configuration.
                                     match config {
+                                        _ if config_json.any_configured() => {
+                                            (config_json, project.path(), None)
+                                        }
                                         FlycheckConfig::CustomCommand { .. } => {
-                                            (project.path(), None)
+                                            (config_json, project.path(), None)
                                         }
                                         _ => return None,
                                     }
@@ -841,11 +856,12 @@ impl GlobalState {
                             ws.sysroot.root().map(ToOwned::to_owned),
                         ))
                     })
-                    .map(|(id, (root, manifest_path), sysroot_root)| {
+                    .map(|(id, (config_json, root, manifest_path), sysroot_root)| {
                         FlycheckHandle::spawn(
                             id,
                             sender.clone(),
                             config.clone(),
+                            config_json,
                             sysroot_root,
                             root.to_path_buf(),
                             manifest_path.map(|it| it.to_path_buf()),
