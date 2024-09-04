@@ -16,7 +16,7 @@ use vfs::{AbsPathBuf, ChangeKind, VfsPath};
 
 use crate::{
     config::{Config, ConfigChange},
-    flycheck::Target,
+    flycheck::{self, Target},
     global_state::{FetchWorkspaceRequest, GlobalState},
     lsp::{from_proto, utils::apply_document_changes},
     lsp_ext::{self, RunFlycheckParams},
@@ -382,11 +382,12 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         match package.filter(|_| {
                             !world.config.flycheck_workspace(source_root_id) || target.is_some()
                         }) {
-                            Some(package) => flycheck
-                                .restart_for_package(package, target.clone().map(TupleExt::head)),
+                            Some(package) => flycheck.restart_for_package(
+                                flycheck::PackageToRestart::Package { package },
+                                target.clone().map(TupleExt::head),
+                            ),
                             None => flycheck.restart_workspace(saved_file.clone()),
                         }
-                        continue;
                     }
                 }
             }
