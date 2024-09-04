@@ -427,6 +427,7 @@ pub struct RunnableData {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RunnableKindData {
+    Flycheck,
     Check,
     Run,
     TestOne,
@@ -497,6 +498,7 @@ impl From<RunnableKindData> for RunnableKind {
             RunnableKindData::Check => RunnableKind::Check,
             RunnableKindData::Run => RunnableKind::Run,
             RunnableKindData::TestOne => RunnableKind::TestOne,
+            RunnableKindData::Flycheck => RunnableKind::Flycheck,
         }
     }
 }
