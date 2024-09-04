@@ -418,29 +418,30 @@ impl FlycheckActor {
                         continue;
                     };
 
-                    let formatted_command = format!("{command:?}");
+                    let debug_command = format!("{command:?}");
+                    let user_facing_command = match origin {
+                        FlycheckCommandOrigin::Cargo
+                        | FlycheckCommandOrigin::CheckOverrideCommand => self.config.to_string(),
+                        // show them the full command. advanced user
+                        FlycheckCommandOrigin::ProjectJsonRunnable => display_command(
+                            &command,
+                            Some(std::path::Path::new(self.root.as_path())),
+                        ),
+                    };
 
                     tracing::debug!(?command, "will restart flycheck");
                     let (sender, receiver) = unbounded();
                     match CommandHandle::spawn(command, sender) {
                         Ok(command_handle) => {
-                            tracing::debug!(command = formatted_command, "did restart flycheck");
+                            tracing::debug!(command = debug_command, "did restart flycheck");
                             self.command_handle = Some(command_handle);
                             self.command_receiver = Some(receiver);
-                            let user_facing_command = match origin {
-                                FlycheckCommandOrigin::Cargo
-                                | FlycheckCommandOrigin::CheckOverrideCommand => {
-                                    self.config.to_string()
-                                }
-                                // show them the full command. advanced user
-                                FlycheckCommandOrigin::ProjectJsonRunnable => formatted_command,
-                            };
                             self.report_progress(Progress::DidStart { user_facing_command });
                             self.status = FlycheckStatus::Started;
                         }
                         Err(error) => {
                             self.report_progress(Progress::DidFailToRestart(format!(
-                                "Failed to run the following command: {formatted_command} error={error}"
+                                "Failed to run the following command: {debug_command} error={error}"
                             )));
                             self.status = FlycheckStatus::Finished;
                         }
@@ -695,4 +696,74 @@ impl ParseFromLine for CargoCheckMessage {
 enum JsonMessage {
     Cargo(cargo_metadata::Message),
     Rustc(Diagnostic),
+}
+
+/// Not good enough to execute in a shell, but good enough to show the user without all the noisy
+/// quotes
+fn display_command(c: &Command, implicit_cwd: Option<&std::path::Path>) -> String {
+    let mut o = String::new();
+    use std::fmt::Write;
+    let lossy = std::ffi::OsStr::to_string_lossy;
+    if let Some(dir) = c.get_current_dir() {
+        if Some(dir) == implicit_cwd.map(std::path::Path::new) {
+            // pass
+        } else if dir.to_string_lossy().contains(" ") {
+            write!(o, "cd {:?} && ", dir).unwrap();
+        } else {
+            write!(o, "cd {} && ", dir.display()).unwrap();
+        }
+    }
+    for (env, val) in c.get_envs() {
+        let (env, val) = (lossy(env), val.map(lossy).unwrap_or(std::borrow::Cow::Borrowed("")));
+        if env.contains(" ") {
+            write!(o, "\"{}={}\" ", env, val).unwrap();
+        } else if val.contains(" ") {
+            write!(o, "{}=\"{}\" ", env, val).unwrap();
+        } else {
+            write!(o, "{}={} ", env, val).unwrap();
+        }
+    }
+    let prog = lossy(c.get_program());
+    if prog.contains(" ") {
+        write!(o, "{:?}", prog).unwrap();
+    } else {
+        write!(o, "{}", prog).unwrap();
+    }
+    for arg in c.get_args() {
+        let arg = lossy(arg);
+        if arg.contains(" ") {
+            write!(o, " \"{}\"", arg).unwrap();
+        } else {
+            write!(o, " {}", arg).unwrap();
+        }
+    }
+    o
+}
+
+#[test]
+fn test_display_command() {
+    use std::path::Path;
+    let mut cmd = Command::new("command");
+    assert_eq!(display_command(cmd.arg("--arg"), None), "command --arg");
+    assert_eq!(display_command(cmd.arg("spaced arg"), None), "command --arg \"spaced arg\"");
+    assert_eq!(
+        display_command(cmd.env("ENVIRON", "yeah"), None),
+        "ENVIRON=yeah command --arg \"spaced arg\""
+    );
+    assert_eq!(
+        display_command(cmd.env("OTHER", "spaced env"), None),
+        "ENVIRON=yeah OTHER=\"spaced env\" command --arg \"spaced arg\""
+    );
+    assert_eq!(
+        display_command(cmd.current_dir("/tmp"), None),
+        "cd /tmp && ENVIRON=yeah OTHER=\"spaced env\" command --arg \"spaced arg\""
+    );
+    assert_eq!(
+        display_command(cmd.current_dir("/tmp and/thing"), None),
+        "cd \"/tmp and/thing\" && ENVIRON=yeah OTHER=\"spaced env\" command --arg \"spaced arg\""
+    );
+    assert_eq!(
+        display_command(cmd.current_dir("/tmp and/thing"), Some(Path::new("/tmp and/thing"))),
+        "ENVIRON=yeah OTHER=\"spaced env\" command --arg \"spaced arg\""
+    );
 }
