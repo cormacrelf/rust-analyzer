@@ -546,8 +546,13 @@ impl FlycheckActor {
                     PackageToRestart::Package(PackageSpecifier::Cargo { cargo_canonical_name }) => {
                         cmd.arg("-p").arg(cargo_canonical_name)
                     }
+                    PackageToRestart::Package(PackageSpecifier::BuildInfo { label: _ }) => {
+                        // No way to flycheck this single package. All we have is a build label.
+                        // There's no way to really say whether this build label happens to be
+                        // a cargo canonical name, so we won't try.
+                        return None;
+                    }
                     PackageToRestart::All => cmd.arg("--workspace"),
-                    _ => return None,
                 };
 
                 if let Some(tgt) = target {
@@ -582,38 +587,35 @@ impl FlycheckActor {
             FlycheckConfig::CustomCommand { command, args, extra_env, invocation_strategy } => {
                 let mut cmd = Command::new(command);
                 cmd.envs(extra_env);
-
-                match invocation_strategy {
-                    InvocationStrategy::Once => {
-                        cmd.current_dir(&self.root);
-                    }
+                let root = match invocation_strategy {
+                    InvocationStrategy::Once => self.root.as_path(),
                     InvocationStrategy::PerWorkspace => {
-                        // FIXME: cmd.current_dir(&affected_workspace);
-                        cmd.current_dir(&self.root);
+                        // FIXME: should run in the affected_workspace?
+                        self.root.as_path()
                     }
-                }
+                };
 
-                // If the custom command has a $saved_file placeholder, and
-                // we're saving a file, replace the placeholder in the arguments.
-                if let Some(saved_file) = saved_file {
-                    for arg in args {
-                        if arg == SAVED_FILE_PLACEHOLDER {
-                            cmd.arg(saved_file);
-                        } else {
-                            cmd.arg(arg);
-                        }
-                    }
-                } else {
-                    for arg in args {
-                        if arg == SAVED_FILE_PLACEHOLDER {
-                            // The custom command has a $saved_file placeholder,
-                            // but we had an IDE event that wasn't a file save. Do nothing.
-                            return None;
-                        }
+                let runnable = project_json::Runnable {
+                    program: command.clone(),
+                    cwd: Utf8PathBuf::new(),
+                    args: args.clone(),
+                    kind: project_json::RunnableKind::Flycheck,
+                };
 
-                        cmd.arg(arg);
+                let label = match &package {
+                    PackageToRestart::All => None,
+                    PackageToRestart::Package(PackageSpecifier::BuildInfo { label }) => {
+                        Some(label.as_ref())
                     }
-                }
+                    PackageToRestart::Package(PackageSpecifier::Cargo { cargo_canonical_name }) => {
+                        Some(cargo_canonical_name.as_ref())
+                    }
+                };
+
+                let subs = Substitutions { label, saved_file: saved_file.map(|x| x.as_str()) };
+                let mut cmd = subs.substitute(&runnable)?;
+                cmd.envs(extra_env);
+                cmd.current_dir(root);
 
                 Some(cmd)
             }
