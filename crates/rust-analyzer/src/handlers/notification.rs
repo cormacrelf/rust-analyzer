@@ -371,7 +371,7 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                     project_model::ProjectWorkspaceKind::Json(project) => {
                         let krate_flycheck = crate_root_paths.iter().find_map(|root| {
                             let krate = project.crate_by_root(root)?;
-                            project_json_flycheck(project, &krate)
+                            project_json_flycheck(project, krate)
                         });
 
                         // If there is no matching crate, returns None and doesn't hit this
