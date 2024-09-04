@@ -421,10 +421,12 @@ impl FlycheckActor {
 
                     let debug_command = format!("{command:?}");
                     let user_facing_command = match origin {
-                        FlycheckCommandOrigin::Cargo
-                        | FlycheckCommandOrigin::CheckOverrideCommand => self.config.to_string(),
-                        // show them the full command. advanced user
-                        FlycheckCommandOrigin::ProjectJsonRunnable => display_command(
+                        // Don't show all the --format=json-with-blah-blah args, just the simple
+                        // version
+                        FlycheckCommandOrigin::Cargo => self.config.to_string(),
+                        // show them the full command but pretty printed. advanced user
+                        FlycheckCommandOrigin::ProjectJsonRunnable
+                        | FlycheckCommandOrigin::CheckOverrideCommand => display_command(
                             &command,
                             Some(std::path::Path::new(self.root.as_path())),
                         ),
