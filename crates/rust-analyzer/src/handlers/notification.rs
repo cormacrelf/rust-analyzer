@@ -389,10 +389,8 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         match package.filter(|_| {
                             !world.config.flycheck_workspace(source_root_id) || target.is_some()
                         }) {
-                            Some(spec) => flycheck.restart_for_package(
-                                flycheck::PackageToRestart::Package(spec),
-                                target.clone().map(TupleExt::head),
-                            ),
+                            Some(spec) => flycheck
+                                .restart_for_package(spec, target.clone().map(TupleExt::head)),
                             None => flycheck.restart_workspace(saved_file.clone()),
                         }
                     }
@@ -461,7 +459,7 @@ fn project_json_flycheck(
 ) -> Option<flycheck::PackageSpecifier> {
     if let Some(build_info) = krate.build.as_ref() {
         let label = build_info.label.clone();
-        Some(flycheck::PackageSpecifier::BuildInfo { label: Some(label) })
+        Some(flycheck::PackageSpecifier::BuildInfo { label })
     } else {
         // No build_info field, so assume this is built by cargo.
         let cargo_canonical_name =

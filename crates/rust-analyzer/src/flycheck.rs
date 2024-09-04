@@ -165,8 +165,14 @@ impl FlycheckHandle {
     }
 
     /// Schedule a re-start of the cargo check worker to do a package wide check.
-    pub(crate) fn restart_for_package(&self, package: PackageToRestart, target: Option<Target>) {
-        self.sender.send(StateChange::Restart { package, saved_file: None, target }).unwrap();
+    pub(crate) fn restart_for_package(&self, package: PackageSpecifier, target: Option<Target>) {
+        self.sender
+            .send(StateChange::Restart {
+                package: PackageToRestart::Package(package),
+                saved_file: None,
+                target,
+            })
+            .unwrap();
     }
 
     /// Stop this cargo check worker.
@@ -222,7 +228,7 @@ pub(crate) enum Progress {
     DidFailToRestart(String),
 }
 
-pub(crate) enum PackageToRestart {
+enum PackageToRestart {
     All,
     // Either a cargo package or a $label in rust-project.check.overrideCommand
     Package(PackageSpecifier),
@@ -235,7 +241,7 @@ pub(crate) enum PackageSpecifier {
     },
     BuildInfo {
         /// If a `build` field is present in rust-project.json, its label field
-        label: Option<String>,
+        label: String,
     },
     /// WARN: Can't remember what this is for
     BuildInfoCustom { command: Command, label: String },
