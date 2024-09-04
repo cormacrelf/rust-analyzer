@@ -3,6 +3,7 @@
 
 use std::ops::{Deref, Not as _};
 
+use ide::CrateId;
 use itertools::Itertools;
 use lsp_types::{
     CancelParams, DidChangeConfigurationParams, DidChangeTextDocumentParams,
@@ -11,7 +12,6 @@ use lsp_types::{
 };
 use paths::Utf8PathBuf;
 use project_model::project_json;
-use stdx::TupleExt;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, ChangeKind, VfsPath};
 
@@ -298,28 +298,47 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
         let mut updated = false;
         let task = move || -> std::result::Result<(), ide::Cancelled> {
             // Is the target binary? If so we let flycheck run only for the workspace that contains the crate.
-            let target = TargetSpec::for_file(&world, file_id)?.and_then(|it| {
-                let tgt_kind = it.target_kind();
-                let (tgt_name, crate_id) = match it {
-                    TargetSpec::Cargo(c) => (c.target, c.crate_id),
-                    TargetSpec::ProjectJson(p) => (p.label, p.crate_id),
-                };
+            enum FlycheckScope {
+                /// Cargo workspace but user edited a binary target. There should be no
+                /// downstream crates, so flychecking the workspace would be a waste.
+                Binary(Target, CrateId),
+                /// Limit flycheck to the crate that was touched. We don't have workspace flycheck capability for ProjectJson yet.
+                NoDownstream(CrateId),
+                /// Just do the whole workspace
+                Workspace,
+            }
 
-                let tgt = match tgt_kind {
-                    project_model::TargetKind::Bin => Target::Bin(tgt_name),
-                    project_model::TargetKind::Example => Target::Example(tgt_name),
-                    project_model::TargetKind::Test => Target::Test(tgt_name),
-                    project_model::TargetKind::Bench => Target::Benchmark(tgt_name),
-                    _ => return None,
-                };
+            let scope = TargetSpec::for_file(&world, file_id)?
+                .map(|it| {
+                    let tgt_kind = it.target_kind();
+                    let (tgt_name, crate_id) = match it {
+                        TargetSpec::Cargo(c) => (c.target, c.crate_id),
+                        TargetSpec::ProjectJson(p) => (p.label, p.crate_id),
+                    };
 
-                Some((tgt, crate_id))
-            });
+                    match tgt_kind {
+                        project_model::TargetKind::Bin => {
+                            FlycheckScope::Binary(Target::Bin(tgt_name), crate_id)
+                        }
+                        project_model::TargetKind::Example => {
+                            FlycheckScope::Binary(Target::Example(tgt_name), crate_id)
+                        }
+                        project_model::TargetKind::Test => {
+                            FlycheckScope::Binary(Target::Test(tgt_name), crate_id)
+                        }
+                        project_model::TargetKind::Bench => {
+                            FlycheckScope::Binary(Target::Benchmark(tgt_name), crate_id)
+                        }
+                        _ if !world.config.flycheck_workspace(source_root_id) => {
+                            FlycheckScope::NoDownstream(crate_id)
+                        }
+                        _ => FlycheckScope::Workspace,
+                    }
+                })
+                .unwrap_or(FlycheckScope::Workspace);
 
-            let crate_ids = match target {
-                // Trigger flychecks for the only crate which the target belongs to
-                Some((_, krate)) => vec![krate],
-                None => {
+            let crate_ids = match scope {
+                FlycheckScope::Workspace => {
                     // Trigger flychecks for all workspaces that depend on the saved file
                     // Crates containing or depending on the saved file
                     world
@@ -331,7 +350,12 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         .unique()
                         .collect::<Vec<_>>()
                 }
+                // Trigger flychecks for the only crate which the target belongs to
+                FlycheckScope::Binary(_, krate) | FlycheckScope::NoDownstream(krate) => {
+                    vec![krate]
+                }
             };
+
             let crate_root_paths: Vec<_> = crate_ids
                 .iter()
                 .filter_map(|&crate_id| {
@@ -385,6 +409,11 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
 
             let saved_file = vfs_path.as_path().map(|p| p.to_owned());
 
+            let bin_target = match scope {
+                FlycheckScope::Binary(ref tgt, _) => Some(tgt.clone()),
+                _ => None,
+            };
+
             // Find and trigger corresponding flychecks
             for flycheck in world.flycheck.iter() {
                 for (id, package) in workspace_ids.clone() {
@@ -392,11 +421,10 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         updated = true;
                         match package.filter(|spec| {
                             !world.config.flycheck_workspace(source_root_id)
-                                || target.is_some()
+                                || bin_target.is_some()
                                 || matches!(spec, flycheck::PackageSpecifier::BuildInfo { .. })
                         }) {
-                            Some(spec) => flycheck
-                                .restart_for_package(spec, target.clone().map(TupleExt::head)),
+                            Some(spec) => flycheck.restart_for_package(spec, bin_target.clone()),
                             None => flycheck.restart_workspace(saved_file.clone()),
                         }
                     }
