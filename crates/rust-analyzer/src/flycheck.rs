@@ -4,7 +4,7 @@
 use std::{fmt, io, process::Command, time::Duration};
 
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
-use paths::{AbsPath, AbsPathBuf, Utf8Path, Utf8PathBuf};
+use paths::{AbsPath, AbsPathBuf, Utf8PathBuf};
 use project_model::{project_json, TargetKind};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -618,11 +618,8 @@ impl FlycheckActor {
     }
 
     fn cannot_run_workspace(&self) -> bool {
-        self.check_command(
-            PackageToRestart::All,
-            Some(AbsPath::assert(Utf8Path::new("/tmp/thing.txt"))),
-        )
-        .is_none()
+        let fake_path = self.root.join("fake.rs");
+        self.check_command(PackageToRestart::All, Some(&fake_path)).is_none()
     }
 
     /// Construct a `Command` object for checking the user's code. If the user
