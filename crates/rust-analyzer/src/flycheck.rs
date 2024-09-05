@@ -5,7 +5,7 @@ use std::{fmt, io, process::Command, time::Duration};
 
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
 use paths::{AbsPath, AbsPathBuf, Utf8Path, Utf8PathBuf};
-use project_model::project_json;
+use project_model::{project_json, TargetKind};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
@@ -36,12 +36,61 @@ pub(crate) struct CargoOptions {
     pub(crate) target_dir: Option<Utf8PathBuf>,
 }
 
+/// `--bin rust-analyzer`, `--example example-1`, `--bench microbenchmark`, `--test integrationtest2`
 #[derive(Clone, Debug)]
-pub(crate) enum Target {
+pub(crate) enum BinTarget {
+    /// --bin rust-analyzer
     Bin(String),
+    /// --example example
     Example(String),
-    Benchmark(String),
+    /// -- bench microbenchmark
+    Bench(String),
+    /// --test integrationtest2
     Test(String),
+}
+
+impl BinTarget {
+    pub(crate) fn from_target_kind(kind: TargetKind, name: impl Into<String>) -> Option<Self> {
+        let name = name.into();
+        Some(match kind {
+            TargetKind::Bin => BinTarget::Bin(name),
+            TargetKind::Example => BinTarget::Example(name),
+            TargetKind::Bench => BinTarget::Bench(name),
+            TargetKind::Test => BinTarget::Test(name),
+            _ => return None,
+        })
+    }
+
+    /// For e.g. this crate, we have `rust-analyzer` as the package name, and
+    /// `rust-analyzer` as the binary target name. This is the latter, the
+    /// binary target name.
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            BinTarget::Bin(it)
+            | BinTarget::Example(it)
+            | BinTarget::Bench(it)
+            | BinTarget::Test(it) => it,
+        }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn target_kind(&self) -> TargetKind {
+        match self {
+            BinTarget::Bin(_) => TargetKind::Bin,
+            BinTarget::Example(_) => TargetKind::Example,
+            BinTarget::Bench(_) => TargetKind::Bench,
+            BinTarget::Test(_) => TargetKind::Test,
+        }
+    }
+
+    pub(crate) fn append_cargo_arg<'a>(&self, cmd: &'a mut Command) -> &'a mut Command {
+        match self {
+            BinTarget::Bin(it) => cmd.arg("--bin").arg(it),
+            BinTarget::Example(it) => cmd.arg("--example").arg(it),
+            BinTarget::Bench(it) => cmd.arg("--bench").arg(it),
+            BinTarget::Test(it) => cmd.arg("--test").arg(it),
+        }
+    }
 }
 
 impl CargoOptions {
@@ -167,7 +216,7 @@ impl FlycheckHandle {
     /// Schedule a re-start of the cargo check worker to do a workspace wide check.
     pub(crate) fn restart_workspace(&self, saved_file: Option<AbsPathBuf>) {
         self.sender
-            .send(StateChange::Restart { package: PackageToRestart::All, saved_file, target: None })
+            .send(StateChange::Restart { package: PackageToRestart::All, saved_file })
             .unwrap();
     }
 
@@ -176,12 +225,11 @@ impl FlycheckHandle {
     }
 
     /// Schedule a re-start of the cargo check worker to do a package wide check.
-    pub(crate) fn restart_for_package(&self, package: PackageSpecifier, target: Option<Target>) {
+    pub(crate) fn restart_for_package(&self, package: PackageSpecifier) {
         self.sender
             .send(StateChange::Restart {
                 package: PackageToRestart::Package(package),
                 saved_file: None,
-                target,
             })
             .unwrap();
     }
@@ -264,7 +312,11 @@ enum FlycheckCommandOrigin {
 pub(crate) enum PackageSpecifier {
     Cargo {
         /// The one in Cargo.toml, assumed to work with `cargo check -p {}` etc
+        ///
+        /// PackageData.name works.
         cargo_canonical_name: String,
+        /// Ask cargo to build a specific --bin, --test, --bench
+        bin_target: Option<BinTarget>,
     },
     BuildInfo {
         /// If a `build` field is present in rust-project.json, its label field
@@ -273,7 +325,7 @@ pub(crate) enum PackageSpecifier {
 }
 
 enum StateChange {
-    Restart { package: PackageToRestart, saved_file: Option<AbsPathBuf>, target: Option<Target> },
+    Restart { package: PackageToRestart, saved_file: Option<AbsPathBuf> },
     Cancel,
 }
 
@@ -413,7 +465,7 @@ impl FlycheckActor {
                     tracing::debug!(flycheck_id = self.id, "flycheck cancelled");
                     self.cancel_check_process();
                 }
-                Event::RequestStateChange(StateChange::Restart { package, saved_file, target }) => {
+                Event::RequestStateChange(StateChange::Restart { package, saved_file }) => {
                     // Cancel the previously spawned process
                     self.cancel_check_process();
                     while let Ok(restart) = inbox.recv_timeout(Duration::from_millis(50)) {
@@ -424,7 +476,7 @@ impl FlycheckActor {
                     }
 
                     let Some((command, origin)) =
-                        self.check_command(package.clone(), saved_file.as_deref(), target)
+                        self.check_command(package.clone(), saved_file.as_deref())
                     else {
                         tracing::debug!(?package, "failed to build flycheck command");
                         continue;
@@ -551,7 +603,9 @@ impl FlycheckActor {
             PackageToRestart::Package(
                 PackageSpecifier::BuildInfo { label }
                 // Treat missing build_info as implicitly setting label = the cargo canonical name
-                | PackageSpecifier::Cargo { cargo_canonical_name: label },
+                //
+                // Not sure what to do about --bin etc with custom override commands.
+                | PackageSpecifier::Cargo { cargo_canonical_name: label, bin_target: _ },
             ) => {
                 let template = self.config_json.single_template.as_ref()?;
                 let subs = Substitutions {
@@ -567,7 +621,6 @@ impl FlycheckActor {
         self.check_command(
             PackageToRestart::All,
             Some(AbsPath::assert(Utf8Path::new("/tmp/thing.txt"))),
-            None,
         )
         .is_none()
     }
@@ -579,7 +632,6 @@ impl FlycheckActor {
         &self,
         package: PackageToRestart,
         saved_file: Option<&AbsPath>,
-        target: Option<Target>,
     ) -> Option<(Command, FlycheckCommandOrigin)> {
         match &self.config {
             FlycheckConfig::CargoCommand { command, options, ansi_color_output } => {
@@ -602,8 +654,14 @@ impl FlycheckActor {
                 cmd.current_dir(&self.root);
 
                 match package {
-                    PackageToRestart::Package(PackageSpecifier::Cargo { cargo_canonical_name }) => {
-                        cmd.arg("-p").arg(cargo_canonical_name)
+                    PackageToRestart::Package(PackageSpecifier::Cargo {
+                        cargo_canonical_name,
+                        bin_target,
+                    }) => {
+                        cmd.arg("-p").arg(cargo_canonical_name);
+                        if let Some(tgt) = bin_target {
+                            tgt.append_cargo_arg(&mut cmd);
+                        }
                     }
                     PackageToRestart::Package(PackageSpecifier::BuildInfo { label: _ }) => {
                         // No way to flycheck this single package. All we have is a build label.
@@ -611,17 +669,10 @@ impl FlycheckActor {
                         // a cargo canonical name, so we won't try.
                         return None;
                     }
-                    PackageToRestart::All => cmd.arg("--workspace"),
+                    PackageToRestart::All => {
+                        cmd.arg("--workspace");
+                    }
                 };
-
-                if let Some(tgt) = target {
-                    match tgt {
-                        Target::Bin(tgt) => cmd.arg("--bin").arg(tgt),
-                        Target::Example(tgt) => cmd.arg("--example").arg(tgt),
-                        Target::Test(tgt) => cmd.arg("--test").arg(tgt),
-                        Target::Benchmark(tgt) => cmd.arg("--bench").arg(tgt),
-                    };
-                }
 
                 cmd.arg(if *ansi_color_output {
                     "--message-format=json-diagnostic-rendered-ansi"
@@ -666,9 +717,10 @@ impl FlycheckActor {
                     PackageToRestart::Package(PackageSpecifier::BuildInfo { label }) => {
                         Some(label.as_ref())
                     }
-                    PackageToRestart::Package(PackageSpecifier::Cargo { cargo_canonical_name }) => {
-                        Some(cargo_canonical_name.as_ref())
-                    }
+                    PackageToRestart::Package(PackageSpecifier::Cargo {
+                        cargo_canonical_name,
+                        bin_target: _,
+                    }) => Some(cargo_canonical_name.as_ref()),
                 };
 
                 let subs = Substitutions { label, saved_file: saved_file.map(|x| x.as_str()) };
