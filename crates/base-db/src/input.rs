@@ -432,10 +432,15 @@ impl CrateGraph {
 
     /// Returns all transitive reverse dependencies of the given crate,
     /// including the crate itself.
-    pub fn transitive_rev_deps(&self, of: CrateId) -> impl Iterator<Item = CrateId> {
+    ///
+    /// The result is topologically ordered, like [Self::crates_in_topological_order] -- dependencies
+    /// of a crate come before the crate itself. The crate you pass in is first.
+    pub fn transitive_rev_deps(&self, of: CrateId) -> Vec<CrateId> {
+        let mut rev_deps = Vec::new();
+        let mut visited = FxHashSet::default();
+        visited.insert(of);
+        rev_deps.push(of);
         let mut worklist = vec![of];
-        let mut rev_deps = FxHashSet::default();
-        rev_deps.insert(of);
 
         let mut inverted_graph = FxHashMap::<_, Vec<_>>::default();
         self.arena.iter().for_each(|(krate, data)| {
@@ -446,15 +451,16 @@ impl CrateGraph {
 
         while let Some(krate) = worklist.pop() {
             if let Some(krate_rev_deps) = inverted_graph.get(&krate) {
-                krate_rev_deps
-                    .iter()
-                    .copied()
-                    .filter(|&rev_dep| rev_deps.insert(rev_dep))
-                    .for_each(|rev_dep| worklist.push(rev_dep));
+                krate_rev_deps.iter().copied().filter(|&rev_dep| visited.insert(rev_dep)).for_each(
+                    |rev_dep| {
+                        rev_deps.push(rev_dep);
+                        worklist.push(rev_dep);
+                    },
+                );
             }
         }
 
-        rev_deps.into_iter()
+        rev_deps
     }
 
     /// Returns all crates in the graph, sorted in topological order (ie. dependencies of a crate

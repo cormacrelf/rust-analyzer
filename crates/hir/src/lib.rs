@@ -215,7 +215,7 @@ impl Crate {
         self,
         db: &dyn HirDatabase,
     ) -> impl Iterator<Item = Crate> {
-        db.crate_graph().transitive_rev_deps(self.id).map(|id| Crate { id })
+        db.crate_graph().transitive_rev_deps(self.id).into_iter().map(|id| Crate { id })
     }
 
     pub fn root_module(self) -> Module {

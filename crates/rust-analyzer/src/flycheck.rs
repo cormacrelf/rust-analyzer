@@ -36,7 +36,7 @@ pub(crate) struct CargoOptions {
     pub(crate) target_dir: Option<Utf8PathBuf>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum Target {
     Bin(String),
     Example(String),

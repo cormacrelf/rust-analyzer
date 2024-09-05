@@ -297,14 +297,18 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
         let source_root_id = world.analysis.source_root_id(file_id).ok();
         let mut updated = false;
         let task = move || -> std::result::Result<(), ide::Cancelled> {
-            // Is the target binary? If so we let flycheck run only for the workspace that contains the crate.
+            #[derive(Debug)]
             enum FlycheckScope {
                 /// Cargo workspace but user edited a binary target. There should be no
-                /// downstream crates, so flychecking the workspace would be a waste.
+                /// downstream crates, so flychecking the entire workspace, or any other workspace,
+                /// would be a waste.
+                ///
+                /// We let flycheck run only for the workspace that contains the crate.
                 Binary(Target, CrateId),
-                /// Limit flycheck to the crate that was touched. We don't have workspace flycheck capability for ProjectJson yet.
-                NoDownstream(CrateId),
-                /// Just do the whole workspace
+                /// Limit flycheck to crates actually containing the file_id, because the user does not want to
+                /// flycheck with --workspace.
+                NoDownstream,
+                /// Run on any affected workspace
                 Workspace,
             }
 
@@ -330,28 +334,40 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                             FlycheckScope::Binary(Target::Benchmark(tgt_name), crate_id)
                         }
                         _ if !world.config.flycheck_workspace(source_root_id) => {
-                            FlycheckScope::NoDownstream(crate_id)
+                            // Try to flycheck exactly this crate
+                            FlycheckScope::NoDownstream
                         }
                         _ => FlycheckScope::Workspace,
                     }
                 })
+                // XXX: is this right?
                 .unwrap_or(FlycheckScope::Workspace);
+
+            tracing::debug!("flycheck scope: {:?}", scope);
 
             let crate_ids = match scope {
                 FlycheckScope::Workspace => {
                     // Trigger flychecks for all workspaces that depend on the saved file
-                    // Crates containing or depending on the saved file
+                    // i.e. have crates containing or depending on the saved file
                     world
                         .analysis
                         .crates_for(file_id)?
                         .into_iter()
+                        // These are topologically sorted. So `id` is first.
                         .flat_map(|id| world.analysis.transitive_rev_deps(id))
+                        // FIXME: If there are multiple crates_for(file_id), once you flatten
+                        // multiple transitive_rev_deps, it's no longer guaranteed to be toposort.
                         .flatten()
                         .unique()
                         .collect::<Vec<_>>()
                 }
+                FlycheckScope::NoDownstream => {
+                    // Trigger flychecks in all workspaces, but only for the exact crate that has
+                    // this file, and not for any workspaces that don't have that file.
+                    world.analysis.crates_for(file_id)?
+                }
                 // Trigger flychecks for the only crate which the target belongs to
-                FlycheckScope::Binary(_, krate) | FlycheckScope::NoDownstream(krate) => {
+                FlycheckScope::Binary(_, krate) => {
                     vec![krate]
                 }
             };
@@ -379,13 +395,15 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         ..
                     } => {
                         // Iterate crate_root_paths first because it is in topological
-                        // order, and we can therefore find the actual crate your saved
+                        // order^[1], and we can therefore find the actual crate your saved
                         // file was in rather than some random downstream dependency.
                         // Thus with `[check] workspace = false` we can flycheck the
                         // smallest number of crates (just A) instead of checking B and C
                         // in response to every file save in A.
                         //
                         // A <- B <- C
+                        //
+                        // [1]: But see FIXME above where we flatten.
                         crate_root_paths.iter().find_map(|root| {
                             let target = cargo.target_by_root(root)?;
                             let name = cargo[target].name.clone();
