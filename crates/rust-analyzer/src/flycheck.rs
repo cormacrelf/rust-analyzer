@@ -4,7 +4,7 @@
 use std::{fmt, io, process::Command, time::Duration};
 
 use crossbeam_channel::{select_biased, unbounded, Receiver, Sender};
-use paths::{AbsPath, AbsPathBuf, Utf8PathBuf};
+use paths::{AbsPath, AbsPathBuf, Utf8Path, Utf8PathBuf};
 use project_model::project_json;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -128,6 +128,10 @@ pub(crate) struct FlycheckHandle {
     sender: Sender<StateChange>,
     _thread: stdx::thread::JoinHandle,
     id: usize,
+
+    /// Bit hacky, but this lets us force the use of restart_for_package when the flycheck
+    /// configuration does not support restart_workspace.
+    cannot_run_workspace: bool,
 }
 
 impl FlycheckHandle {
@@ -149,12 +153,15 @@ impl FlycheckHandle {
             workspace_root,
             manifest_path,
         );
+
+        let cannot_run_workspace = actor.cannot_run_workspace();
+
         let (sender, receiver) = unbounded::<StateChange>();
         let thread = stdx::thread::Builder::new(stdx::thread::ThreadIntent::Worker)
             .name("Flycheck".to_owned())
             .spawn(move || actor.run(receiver))
             .expect("failed to spawn thread");
-        FlycheckHandle { id, sender, _thread: thread }
+        FlycheckHandle { id, sender, _thread: thread, cannot_run_workspace }
     }
 
     /// Schedule a re-start of the cargo check worker to do a workspace wide check.
@@ -162,6 +169,10 @@ impl FlycheckHandle {
         self.sender
             .send(StateChange::Restart { package: PackageToRestart::All, saved_file, target: None })
             .unwrap();
+    }
+
+    pub(crate) fn cannot_run_workspace(&self) -> bool {
+        self.cannot_run_workspace
     }
 
     /// Schedule a re-start of the cargo check worker to do a package wide check.
@@ -525,8 +536,17 @@ impl FlycheckActor {
     ) -> Option<Command> {
         match package {
             PackageToRestart::All => {
-                // self.config_json.workspace_template.as_ref().map(|x| x.to_command())
-                None
+                // If the template doesn't contain {label}, then it works for restarting all.
+                //
+                // Might be nice to have: self.config_json.workspace_template.as_ref().map(|x| x.to_command())
+                // But for now this works.
+                //
+                let template = self.config_json.single_template.as_ref()?;
+                let subs = Substitutions {
+                    label: None,
+                    saved_file: saved_file.map(|x| x.as_str()),
+                };
+                subs.substitute(template)
             }
             PackageToRestart::Package(
                 PackageSpecifier::BuildInfo { label }
@@ -541,6 +561,15 @@ impl FlycheckActor {
                 subs.substitute(template)
             }
         }
+    }
+
+    fn cannot_run_workspace(&self) -> bool {
+        self.check_command(
+            PackageToRestart::All,
+            Some(AbsPath::assert(Utf8Path::new("/tmp/thing.txt"))),
+            None,
+        )
+        .is_none()
     }
 
     /// Construct a `Command` object for checking the user's code. If the user

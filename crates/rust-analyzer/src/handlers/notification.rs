@@ -437,10 +437,11 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                 for (id, package) in workspace_ids.clone() {
                     if id == flycheck.id() {
                         updated = true;
-                        match package.filter(|spec| {
+                        match package.filter(|_| {
+                            // Any of these cases, and we can't flycheck the whole workspace.
                             !world.config.flycheck_workspace(source_root_id)
                                 || bin_target.is_some()
-                                || matches!(spec, flycheck::PackageSpecifier::BuildInfo { .. })
+                                || flycheck.cannot_run_workspace()
                         }) {
                             Some(spec) => flycheck.restart_for_package(spec, bin_target.clone()),
                             None => flycheck.restart_workspace(saved_file.clone()),
