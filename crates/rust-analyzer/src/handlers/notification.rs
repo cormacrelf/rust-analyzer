@@ -406,7 +406,8 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                         // [1]: But see FIXME above where we flatten.
                         crate_root_paths.iter().find_map(|root| {
                             let target = cargo.target_by_root(root)?;
-                            let name = cargo[target].name.clone();
+                            let pkg = cargo[target].package;
+                            let name = cargo[pkg].name.clone();
                             Some(flycheck::PackageSpecifier::Cargo { cargo_canonical_name: name })
                         })
                     }
