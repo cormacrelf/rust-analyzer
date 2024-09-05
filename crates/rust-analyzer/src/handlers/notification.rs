@@ -359,11 +359,6 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                 }
             };
 
-            let bin_target = match scope {
-                FlycheckScope::Binary { ref bin_target, .. } => Some(bin_target.clone()),
-                _ => None,
-            };
-
             let crate_root_paths: Vec<_> = crate_ids
                 .iter()
                 .filter_map(|&crate_id| {
@@ -401,7 +396,22 @@ fn run_flycheck(state: &mut GlobalState, vfs_path: VfsPath) -> bool {
                             let pkg = cargo[target].package;
                             let pkg_name = cargo[pkg].name.clone();
                             Some(flycheck::PackageSpecifier::Cargo {
-                                bin_target: bin_target.clone(),
+                                // This is very hacky. But we are iterating through a lot of
+                                // crates, many of which are reverse deps, and it doesn't make
+                                // sense to attach --bin XXX to some random downstream dep in a
+                                // different workspace.
+                                bin_target: match &scope {
+                                    FlycheckScope::Binary {
+                                        package_name: bin_pkg_name,
+                                        bin_target,
+                                        ..
+                                    } if bin_pkg_name.as_ref() == Some(&pkg_name)
+                                        && bin_target.name() == cargo[target].name =>
+                                    {
+                                        Some(bin_target.clone())
+                                    }
+                                    _ => None,
+                                },
                                 cargo_canonical_name: pkg_name,
                             })
                         })
